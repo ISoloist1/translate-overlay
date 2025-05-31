@@ -1,0 +1,12 @@
+keyboard==0.13.5
+numpy==2.2.6
+onnxruntime==1.21.1
+opencv_python==4.11.0.86
+Pillow==11.2.1
+PySide6==6.9.0
+PySide6_Addons==6.9.0
+PySide6_Essentials==6.9.0
+scikit_learn==1.6.1
+sentencepiece==0.2.0
+tokenizers==0.21.1
+transformers==4.48.3
