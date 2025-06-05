@@ -7,7 +7,6 @@ parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent)
 from text_region_detect.craft import CRAFT
 from ocr.florence2 import Florence2OCR
-from translate.madlad import MadladTranslator
 
 
 class Worker(QObject):
@@ -53,7 +52,8 @@ class OCRWorker(Worker):
     def init_worker(self):
         self.ocr = Florence2OCR(
             model_path=self.ocr_model_path, 
-            beam_size=self.beam_size
+            beam_size=self.beam_size,
+            output_region=True
         )
         self.initialized.emit()
 
@@ -67,8 +67,9 @@ class OCRWorker(Worker):
 
 
 class TranslateWorker(Worker):
-    def __init__(self, translate_model_path, beam_size, source_lang, target_lang):
+    def __init__(self, translate_model, translate_model_path, beam_size, source_lang, target_lang):
         super().__init__()
+        self.translate_model = translate_model
         self.translate_model_path = translate_model_path
         self.beam_size = beam_size
         self.source_lang = source_lang
@@ -77,7 +78,7 @@ class TranslateWorker(Worker):
 
     @Slot()
     def init_worker(self):
-        self.translator = MadladTranslator(
+        self.translator = self.translate_model(
             model_path=self.translate_model_path, 
             beam_size=self.beam_size,
         )

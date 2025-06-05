@@ -1,10 +1,15 @@
+import os
+import sys
+
 from PIL import ImageQt
 from PySide6.QtWidgets import QApplication, QWidget, QLabel
 from PySide6.QtGui import QPalette, QColor, QPainter, QFontMetrics, QFont
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 import keyboard
 
-from const import SHORTCUT_KEYS
+parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.append(parent)
+from interface.const import SHORTCUT_KEYS, ACTIONS
 
 
 class TranslateLabel(QLabel):
@@ -51,18 +56,21 @@ class TranslateLabel(QLabel):
     
 
     def stretch_label(self):
+        stretch_list = [QFont.Condensed, QFont.SemiCondensed]
         font = self.font()
         metrics = QFontMetrics(font)
         font_width = metrics.horizontalAdvance(self.text())
         label_width = self.width()
 
-        current_font = self.font()
-        current_font.setStretch(QFont.SemiCondensed)
-        self.setFont(current_font)
+        while font_width > label_width and stretch_list:
+            font.setStretch(stretch_list.pop())
+            metrics = QFontMetrics(font)
+
+        self.setFont(font)
 
 
 class FullscreenBlackOverlay(QWidget):
-    trigger_fade = Signal()
+    trigger_fade = Signal(object)
     window_closed = Signal()
     ocr_done_signal = Signal(object)
     ocr_start_signal = Signal()
@@ -70,6 +78,7 @@ class FullscreenBlackOverlay(QWidget):
     def __init__(self, controller):
         super().__init__()
         self.screenshot = None
+        self.previous_screenshot = None
         self._init_ui()
         self.setWindowOpacity(0.0)
         self.fading_in = False
@@ -99,9 +108,14 @@ class FullscreenBlackOverlay(QWidget):
         text_label = TranslateLabel(text, self)
         text_label.setFixedHeight(y_max-y_min)
         text_label.setFixedWidth(x_max-x_min)
-        text_label.setStyleSheet(
-            f"background-color: rgba(0, 0, 0, 180); color: white; border-radius: 3px; padding: 1px; padding-top: 1px; padding-left: 1px; font-size: {font_size}px;"
-        )
+        text_label.setStyleSheet((
+            "background-color: rgba(0, 0, 0, 180); ",
+            "color: white; ", 
+            "text-align: center; ",
+            "border-radius: 3px; ",
+            "padding: 1px; ",
+            f"font-size: {font_size}px;"
+        ))
         text_label.adjustSize()
         text_label.move(x_min, y_min)
         text_label.stretch_label()
@@ -114,6 +128,7 @@ class FullscreenBlackOverlay(QWidget):
     def start_ocr(self):
         self.clean_old_labels()
         self.remove_ocr_hotkey()
+        self.previous_screenshot = self.screenshot
         self.in_ocr = True
         self.message_label = self.show_text_box(f"OCRing...", (900, 200, 1100, 300), 30)
 
@@ -126,7 +141,7 @@ class FullscreenBlackOverlay(QWidget):
         # print(ocr_results)
         for ocr_text, region_box in ocr_results:
             # self.set_ocr_text_signal.emit(ocr_text, region_box, int(region_box[3] - region_box[1]))
-            self.text_label_list.append(self.show_text_box(ocr_text, region_box, int(region_box[3] - region_box[1]) - 3))
+            self.text_label_list.append(self.show_text_box(ocr_text, region_box, int(region_box[3] - region_box[1]) - 4))
 
         self.in_ocr = False
         keyboard.add_hotkey(SHORTCUT_KEYS["OCR"].lower(), lambda: self.ocr_start_signal.emit())
@@ -156,38 +171,37 @@ class FullscreenBlackOverlay(QWidget):
         self.text_label_list.clear()
 
 
-    @Slot()
-    def _toggle_fade(self):
+    @Slot(object)
+    def _toggle_fade(self, action):
         if self.windowOpacity() < 1.0 and not self.fading_in:
-            if not self.screenshot:
+            if action == ACTIONS["Capture_Screen"] and not self.screenshot:
                 self._capture_screen()
+                self._set_labels_hidden(True)
 
-            # self.update()
+            elif action == ACTIONS["Previous_Result"] and self.previous_screenshot:
+                self.screenshot = self.previous_screenshot
+                self._set_labels_hidden(False)
+
+            self.update()
             self._start_fade_in()
             if not self.in_ocr:
                 keyboard.add_hotkey(SHORTCUT_KEYS["OCR"].lower(), lambda: self.ocr_start_signal.emit())
-
-            # Test text box
-            # self.toggle_count += 1
-            # self.message_label = self.show_text_box(
-            #     f"The count is now {self.toggle_count}", 
-            #     (
-            #         100 * self.toggle_count, 
-            #         100 * self.toggle_count,
-            #         100 * self.toggle_count + 100, 
-            #         100 * self.toggle_count + 50,
-            #     )
-            # )
         
         elif self.windowOpacity() > 0.0 and not self.fading_out:
             self._start_fade_out()
             self.remove_ocr_hotkey()
+            self.screenshot = None
 
 
     def _capture_screen(self):
         screen = QApplication.primaryScreen()
         self.screenshot = screen.grabWindow(0)
-        self.update()
+        # self.update()
+
+
+    def _set_labels_hidden(self, state):
+        for label in self.text_label_list:
+            label.setHidden(state)
 
 
     def _start_fade_in(self):

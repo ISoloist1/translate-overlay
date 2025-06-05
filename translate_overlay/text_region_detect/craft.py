@@ -76,7 +76,7 @@ class CRAFT(BaseTextRegionDetection):
             return img
 
 
-        pad_resized_image, ratio = resize_aspect_retio(input_image, 1280, 1.5)
+        pad_resized_image, ratio = resize_aspect_retio(input_image, 1920, 1.5)
         image_array = np.array(pad_resized_image)
 
         if image_array.shape[2] == 4: 
@@ -223,7 +223,7 @@ class CRAFT(BaseTextRegionDetection):
 
 
 if __name__ == "__main__":
-    from utils.misc import draw_boxes
+    from utils.misc import draw_boxes, merge_text_images
     # Example usage
     model_path = sys.argv[1]
     image = Image.open(sys.argv[2])
@@ -242,10 +242,23 @@ if __name__ == "__main__":
     # End test crop
 
 
+    # Test merge images
+    # crop_image_list = list()
+    # for box_xyxy in boxes_xyxy:
+    #     new_image = image.crop(box_xyxy)
+    #     crop_image_list.append((new_image, box_xyxy))
+
+    # merged_image_dict = merge_text_images(crop_image_list)
+    # for idx, item in merged_image_dict.items():
+    #     item["merged_image"].show()
+
+    # End merge images
+
+
+
     image = draw_boxes(image, boxes_xyxy, "yellow")
     # image = draw_boxes(image, merged_boxes_xyxy, "red")
 
     print(boxes_xyxy)
-    print(merged_boxes_xyxy)
     image.show()
 

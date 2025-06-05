@@ -8,17 +8,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QFileDialog, QSpinBox, QComboBox
 )
 
-from overlay import FullscreenBlackOverlay
-from controller import Controller
-from const import SHORTCUT_KEYS
-
 parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent)
-from translate.madlad import MadladTranslator
+from translate import TRANSLATERS
+from interface.overlay import FullscreenBlackOverlay
+from interface.controller import Controller
+from interface.const import SHORTCUT_KEYS, ACTIONS
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, trd_path="", ocr_path="", translate_path=""):
         super().__init__()
         self.setWindowTitle("Translate Overlay")
         self.setGeometry(100, 100, 600, 200)
@@ -35,7 +34,7 @@ class MainWindow(QMainWindow):
         # Text Region Detect model path
         trd_path_layout = QHBoxLayout()
         self.trd_path_edit = QLineEdit()
-        self.trd_path_edit.setText("E:\\work\\1-personal\\CRAFT-onnx\\models")
+        self.trd_path_edit.setText(trd_path)
         trd_path_browse = QPushButton("Browse...")
         trd_path_browse.clicked.connect(self._browse_trd_path)
         trd_path_layout.addWidget(QLabel("Text Region Detect model path:"))
@@ -47,24 +46,36 @@ class MainWindow(QMainWindow):
         # OCR model path
         ocr_path_layout = QHBoxLayout()
         self.ocr_path_edit = QLineEdit()
-        self.ocr_path_edit.setText("E:\\work\\1-personal\\Florence-2-base\\onnx\\onnx")
+        self.ocr_path_edit.setText(ocr_path)
         ocr_path_browse = QPushButton("Browse...")
         ocr_path_browse.clicked.connect(self._browse_ocr_path)
         ocr_path_layout.addWidget(QLabel("OCR model path:"))
         ocr_path_layout.addWidget(self.ocr_path_edit)
         ocr_path_layout.addWidget(ocr_path_browse)
         main_layout.addLayout(ocr_path_layout)
+        main_layout.addSpacing(20)
+
+
+        # Translate model list
+        translate_model_layout = QHBoxLayout()
+        self.translate_model_dropdown = QComboBox()
+        self.translate_model_dropdown.addItems(TRANSLATERS.keys())
+        translate_model_layout.addWidget(QLabel("Translate model:"))
+        translate_model_layout.addWidget(self.translate_model_dropdown)
+        main_layout.addLayout(translate_model_layout)
 
         # Translate model path
         translate_path_layout = QHBoxLayout()
         self.translate_path_edit = QLineEdit()
-        self.translate_path_edit.setText("E:\\work\\1-personal\\madlad400-3b-mt\\onnx\\quantization\\optimum\\with_accelerate_weight_dedup")
+        self.translate_path_edit.setText(translate_path)
         translate_path_browse = QPushButton("Browse...")
         translate_path_browse.clicked.connect(self._browse_translate_path)
         translate_path_layout.addWidget(QLabel("Translate model path:"))
         translate_path_layout.addWidget(self.translate_path_edit)
         translate_path_layout.addWidget(translate_path_browse)
         main_layout.addLayout(translate_path_layout)
+        main_layout.addSpacing(20)
+
 
         # Source language dropdown
         source_lang_layout = QHBoxLayout()
@@ -81,8 +92,8 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(target_lang_layout)
 
         # Populate dropdowns with language lists
-        self.source_langs = MadladTranslator.source_lang_list()
-        self.target_langs = MadladTranslator.target_lang_list()
+        self.source_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].source_lang_list()
+        self.target_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].target_lang_list()
         self.source_lang_dropdown.addItems(self.source_langs)
         self.target_lang_dropdown.addItems(self.target_langs)
         # print(f"Selected: {target_lang_dropdown.itemText(index)}")
@@ -100,7 +111,12 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(beam_layout)
         
         # Instruction label
-        instruction_label = QLabel(f"Shortcut key: {SHORTCUT_KEYS["Overlay"]}")
+        instruction_label = QLabel("\n".join([
+            f"Shortcut key:", 
+            f"\tCapture screen: {SHORTCUT_KEYS['Overlay']}",
+            f"\t(In overlay) Start OCR: {SHORTCUT_KEYS['OCR']}",
+            f"\tShow previous OCR result: {SHORTCUT_KEYS['PrevResult']}",
+        ]))
         main_layout.addWidget(instruction_label, alignment=Qt.AlignBottom)
 
         # Start button
@@ -127,6 +143,7 @@ class MainWindow(QMainWindow):
             self.controller.init_worker(
                 self.trd_path_edit.text(),
                 self.ocr_path_edit.text(), 
+                TRANSLATERS[self.translate_model_dropdown.currentText()],
                 self.translate_path_edit.text(), 
                 self.beam_size_spin.value(),
                 self.source_lang_dropdown.currentText(),
@@ -136,7 +153,8 @@ class MainWindow(QMainWindow):
 
     def _on_init_finished(self):
         self.overlay_window = FullscreenBlackOverlay(self.controller)
-        keyboard.add_hotkey(SHORTCUT_KEYS["Overlay"].lower(), lambda: self.overlay_window.trigger_fade.emit())
+        keyboard.add_hotkey(SHORTCUT_KEYS["Overlay"].lower(), lambda: self.overlay_window.trigger_fade.emit(ACTIONS["Capture_Screen"]))
+        keyboard.add_hotkey(SHORTCUT_KEYS["PrevResult"].lower(), lambda: self.overlay_window.trigger_fade.emit(ACTIONS["Previous_Result"]))
         
         self.overlay_window.window_closed.connect(self._overlay_closed)
         self.overlay_window.show()
@@ -182,9 +200,12 @@ class MainWindow(QMainWindow):
             self.translate_path_edit.setText(directory)
 
 
-# For testing the window independently
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = MainWindow()
+    window = MainWindow(
+        trd_path="E:\\work\\1-personal\\CRAFT-onnx\\models",
+        ocr_path="E:\\work\\1-personal\\Florence-2-base\\onnx\\onnx",
+        translate_path="E:\\work\\1-personal\\madlad400-3b-mt\\onnx\\quantization\\optimum\\with_accelerate_weight_dedup",
+    )
     window.show()
     sys.exit(app.exec())

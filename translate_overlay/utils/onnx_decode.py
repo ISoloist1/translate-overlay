@@ -83,6 +83,10 @@ def batched_beam_search_with_past(
     beams = [(0.0, np.array([[start_id]], dtype=np.int64), None)]
     finished = []
 
+    # Could implement:
+    #   Repetition Penalty
+    #   No repeat N-gram
+
     for _ in range(max_length):
         # Prepare batch inputs for all beams
         batch_input_ids = np.concatenate([seq[:, -1:] for _, seq, _ in beams], axis=0)  # (beam, 1)
