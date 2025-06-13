@@ -11,6 +11,10 @@ import onnxruntime as ort
 parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent)
 from text_region_detect.base import BaseTextRegionDetection
+from utils.logger import setup_logger
+
+
+logger = setup_logger()
 
 
 class CRAFT(BaseTextRegionDetection):
@@ -20,7 +24,7 @@ class CRAFT(BaseTextRegionDetection):
         t0 = time.time()
         self._load_model()
         t1 = time.time()
-        print(f"Load model: {t1 - t0:.4f} seconds")
+        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
 
     def _load_model(self):
@@ -203,19 +207,19 @@ class CRAFT(BaseTextRegionDetection):
         t0 = time.time()
         input_array, ratio = self._preprocess(input_image)
         t1 = time.time()
-        print(f"Preprocess: {t1 - t0:.4f} seconds")
+        logger.info(f"Preprocess: {t1 - t0:.4f} seconds")
         
         # Perform inference
         t2 = time.time()
         infer_output, refine_output = self._inference(input_array)
         t3 = time.time()
-        print(f"Inference: {t3 - t2:.4f} seconds")
+        logger.info(f"Inference: {t3 - t2:.4f} seconds")
         
         # Postprocess the outputs to get the final text
         t4 = time.time()
         boxes_xyxy = self._postprocess(infer_output, refine_output, input_image, ratio)
         t5 = time.time()
-        print(f"Postprocess: {t5 - t4:.4f} seconds")
+        logger.info(f"Postprocess: {t5 - t4:.4f} seconds")
         
         return boxes_xyxy
 
@@ -233,10 +237,7 @@ if __name__ == "__main__":
 
 
     # Test crop
-    MAX_WIDTH, MAX_HEIGHT = 768, 768  # Define maximum allowed size
-    EMPTINESS_THRESHOLD = 0.1                   # Minimum fraction of "empty"
     merged_boxes_xyxy = []
-    img_width, img_height = image.size
 
     # merged_boxes_xyxy = group_boxes_to_paragraphs_dbscan(boxes_xyxy, eps=30)
     # End test crop
@@ -257,8 +258,8 @@ if __name__ == "__main__":
 
 
     image = draw_boxes(image, boxes_xyxy, "yellow")
-    # image = draw_boxes(image, merged_boxes_xyxy, "red")
+    image = draw_boxes(image, merged_boxes_xyxy, "red")
 
-    print(boxes_xyxy)
+    logger.info(boxes_xyxy)
     image.show()
 

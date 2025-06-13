@@ -11,6 +11,10 @@ parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent)
 from ocr.base import BaseOCR
 from utils.onnx_decode import create_init_past_key_values, greedy_search, batched_beam_search_with_past
+from utils.logger import setup_logger
+
+
+logger = setup_logger()
 
 
 class Florence2OCR(BaseOCR):
@@ -50,7 +54,7 @@ class Florence2OCR(BaseOCR):
         t0 = time.time()
         self._load_model()
         t1 = time.time()
-        print(f"Load model: {t1 - t0:.4f} seconds")
+        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
     
     def _load_model(self) -> None:
@@ -202,8 +206,6 @@ class Florence2OCR(BaseOCR):
         decoded_text = self.processor.batch_decode(outputs, skip_special_tokens=False)[0]
         if decoded_text.startswith("</s>"):
             decoded_text = decoded_text.replace("</s>", "", 1)
-        # print(outputs)
-        # print(decoded_text)
         
         parsed_results = self.processor.post_process_generation(
             decoded_text, 
@@ -231,19 +233,19 @@ class Florence2OCR(BaseOCR):
         t0 = time.time()
         inputs = self._preprocess(image)
         t1 = time.time()
-        print(f"Preprocess: {t1 - t0:.4f} seconds")
+        logger.info(f"Preprocess: {t1 - t0:.4f} seconds")
         
         # Perform inference
         t2 = time.time()
         outputs = self._inference(inputs["input_ids"], inputs["pixel_values"])
         t3 = time.time()
-        print(f"Inference: {t3 - t2:.4f} seconds")
+        logger.info(f"Inference: {t3 - t2:.4f} seconds")
         
         # Postprocess the outputs to get the final text
         t4 = time.time()
         parsed_results = self._postprocess(image, outputs)
         t5 = time.time()
-        print(f"Postprocess: {t5 - t4:.4f} seconds")
+        logger.info(f"Postprocess: {t5 - t4:.4f} seconds")
         
         return parsed_results
 
@@ -263,6 +265,6 @@ if __name__ == "__main__":
     ocr = Florence2OCR(model_path, beam_size=3, output_region=True)
     reco_result = ocr.recognize(image)
     boxes_xyxy = [(i[1][0], i[1][1], i[1][4], i[1][5]) for i in reco_result]
-    print(reco_result)
+    logger.info(reco_result)
     image = draw_boxes(image, boxes_xyxy)
     image.show()

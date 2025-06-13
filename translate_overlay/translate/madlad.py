@@ -10,6 +10,11 @@ parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent)
 from translate.base import BaseTranslator
 from utils.onnx_decode import log_softmax, create_init_past_key_values, batched_beam_search_with_past
+from utils.logger import setup_logger
+
+
+logger = setup_logger()
+
 
 # Madlad 400 Dataset & languages list: https://arxiv.org/pdf/2309.04662
 # IETF BCP 47 language tag: https://en.wikipedia.org/wiki/IETF_language_tag
@@ -59,7 +64,7 @@ class MadladTranslator(BaseTranslator):
         t0 = time.time()
         self._load_model()
         t1 = time.time()
-        print(f"Load model: {t1 - t0:.4f} seconds")
+        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
 
     def _load_model(self) -> None:
@@ -169,19 +174,19 @@ class MadladTranslator(BaseTranslator):
         self.max_length = len(input_tokens) * 2
         input_ids = np.array([input_tokens], dtype=np.int64)
         t1 = time.time()
-        print(f"Tokenization: {t1 - t0:.4f} seconds")
+        logger.info(f"Tokenization: {t1 - t0:.4f} seconds")
 
         t2 = time.time()
         output_ids = self._inference(input_ids)
         t3 = time.time()
-        print(f"Inference: {t3 - t2:.4f} seconds")
+        logger.info(f"Inference: {t3 - t2:.4f} seconds")
 
         output_tokens = [item for item in output_ids[0].tolist() if item not in [self.unk_id, self.bos_id, self.eos_id]]
         output_text = self._decode_tokens(output_tokens)
         t4 = time.time()
-        print(f"Decoding: {t4 - t3:.4f} seconds")
+        logger.info(f"Decoding: {t4 - t3:.4f} seconds")
 
-        print(f"Total: {t4 - t0:.4f} seconds")
+        logger.info(f"Total: {t4 - t0:.4f} seconds")
 
         return output_text
     
@@ -215,7 +220,7 @@ if __name__ == "__main__":
     model_path = sys.argv[1]
     translator = MadladTranslator(model_path=model_path, beam_size=3)
     translated_text = translator.translate(text, "Chinese", "Any")
-    print(translated_text)
+    logger.info(translated_text)
 
 
 
