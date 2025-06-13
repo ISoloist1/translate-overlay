@@ -1,4 +1,3 @@
-import difflib
 from math import ceil
 
 import numpy as np
@@ -165,7 +164,8 @@ def map_florence2_to_trd_result(florence2_result_list, trd_box_list, merged_box_
             if any([
                 florence2_box_xyxy[3] <= merged_box_xyxy[1],
                 florence2_box_xyxy[1] >= merged_box_xyxy[3],
-            ]) and not is_mostly_inside(florence2_box_xyxy, merged_box_xyxy, box_overlap_ratio):
+                not is_mostly_inside(florence2_box_xyxy, merged_box_xyxy, box_overlap_ratio),
+            ]):
                 continue
 
             trd_box_xyxy = tuple(trd_box_xyxy)
@@ -176,10 +176,8 @@ def map_florence2_to_trd_result(florence2_result_list, trd_box_list, merged_box_
             result_dict[trd_box_xyxy].append(text)
             break
 
-        if result_used:
-            continue
-
-        print(f"Florence2 result not used: \nText: {text}\nBox: {florence2_box_xyxy}")
+        if not result_used:
+            print(f"Florence2 result not used: \nText: {text}\nBox: {florence2_box_xyxy}")
 
     result_list = [(' - '.join(text), box_xyxy) for box_xyxy, text in result_dict.items()]
 
