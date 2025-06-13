@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent)
 from translate import TRANSLATERS
+from ocr import TEXT_RECOGNIZERS
 from interface.overlay import FullscreenBlackOverlay
 from interface.controller import Controller
 from interface.const import SHORTCUT_KEYS, ACTIONS
@@ -21,7 +22,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Translate Overlay")
         self.setGeometry(100, 100, 600, 200)
-        self.setMinimumSize(500, 400)
+        self.setMinimumSize(500, 500)
+        self.screens = QApplication.screens()
 
         # Central widget
         central_widget = QWidget()
@@ -30,6 +32,7 @@ class MainWindow(QMainWindow):
         # Layouts
         main_layout = QVBoxLayout()
         central_widget.setLayout(main_layout)
+
 
         # Text Region Detect model path
         trd_path_layout = QHBoxLayout()
@@ -43,6 +46,15 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(trd_path_layout)
         main_layout.addSpacing(20)
 
+
+        # OCR model list
+        ocr_model_layout = QHBoxLayout()
+        self.ocr_model_dropdown = QComboBox()
+        self.ocr_model_dropdown.addItems(TEXT_RECOGNIZERS.keys())
+        ocr_model_layout.addWidget(QLabel("OCR model:"))
+        ocr_model_layout.addWidget(self.ocr_model_dropdown)
+        main_layout.addLayout(ocr_model_layout)
+
         # OCR model path
         ocr_path_layout = QHBoxLayout()
         self.ocr_path_edit = QLineEdit()
@@ -53,6 +65,7 @@ class MainWindow(QMainWindow):
         ocr_path_layout.addWidget(self.ocr_path_edit)
         ocr_path_layout.addWidget(ocr_path_browse)
         main_layout.addLayout(ocr_path_layout)
+
         main_layout.addSpacing(20)
 
 
@@ -74,12 +87,16 @@ class MainWindow(QMainWindow):
         translate_path_layout.addWidget(self.translate_path_edit)
         translate_path_layout.addWidget(translate_path_browse)
         main_layout.addLayout(translate_path_layout)
+
         main_layout.addSpacing(20)
 
 
         # Source language dropdown
         source_lang_layout = QHBoxLayout()
         self.source_lang_dropdown = QComboBox()
+        self.source_lang_dropdown.currentIndexChanged.connect(self._update_source_lang)
+        self.source_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].source_lang_list()
+        self.source_lang_dropdown.addItems(self.source_langs)
         source_lang_layout.addWidget(QLabel("Source Language:"))
         source_lang_layout.addWidget(self.source_lang_dropdown)
         main_layout.addLayout(source_lang_layout)
@@ -87,17 +104,13 @@ class MainWindow(QMainWindow):
         # Target language dropdown
         target_lang_layout = QHBoxLayout()
         self.target_lang_dropdown = QComboBox()
+        self.target_lang_dropdown.currentIndexChanged.connect(self._update_target_lang)
+        self.target_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].target_lang_list()
+        self.target_lang_dropdown.addItems(self.target_langs)
         target_lang_layout.addWidget(QLabel("Target Language:"))
         target_lang_layout.addWidget(self.target_lang_dropdown)
         main_layout.addLayout(target_lang_layout)
-
-        # Populate dropdowns with language lists
-        self.source_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].source_lang_list()
-        self.target_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].target_lang_list()
-        self.source_lang_dropdown.addItems(self.source_langs)
-        self.target_lang_dropdown.addItems(self.target_langs)
-        # print(f"Selected: {target_lang_dropdown.itemText(index)}")
-        # self.target_lang_dropdown.currentText()
+        
 
         # Beam size
         beam_layout = QHBoxLayout()
@@ -109,7 +122,20 @@ class MainWindow(QMainWindow):
         beam_layout.addWidget(QLabel("Beam Size:"))
         beam_layout.addWidget(self.beam_size_spin)
         main_layout.addLayout(beam_layout)
-        
+
+        main_layout.addSpacing(20)
+
+
+        # Screen list
+        screen_list_layout = QHBoxLayout()
+        self.screen_list_dropdown = QComboBox()
+        self.screen_list_dropdown.addItems([screen.name() for screen in self.screens])
+        self.screen_list_dropdown.currentIndexChanged.connect(self._update_screen)
+        screen_list_layout.addWidget(QLabel("Screen:"))
+        screen_list_layout.addWidget(self.screen_list_dropdown)
+        main_layout.addLayout(screen_list_layout)
+
+
         # Instruction label
         instruction_label = QLabel("\n".join([
             f"Shortcut key:", 
@@ -142,17 +168,18 @@ class MainWindow(QMainWindow):
             self.controller.init_finished.connect(self._on_init_finished)
             self.controller.init_worker(
                 self.trd_path_edit.text(),
+                self.ocr_model_dropdown.currentText(),
                 self.ocr_path_edit.text(), 
-                TRANSLATERS[self.translate_model_dropdown.currentText()],
+                self.translate_model_dropdown.currentText(),
                 self.translate_path_edit.text(), 
-                self.beam_size_spin.value(),
                 self.source_lang_dropdown.currentText(),
-                self.target_lang_dropdown.currentText()
+                self.target_lang_dropdown.currentText(),
+                self.beam_size_spin.value(),
             )
 
 
     def _on_init_finished(self):
-        self.overlay_window = FullscreenBlackOverlay(self.controller)
+        self.overlay_window = FullscreenBlackOverlay(self.controller, self.screens[self.screen_list_dropdown.currentIndex()])
         keyboard.add_hotkey(SHORTCUT_KEYS["Overlay"].lower(), lambda: self.overlay_window.trigger_fade.emit(ACTIONS["Capture_Screen"]))
         keyboard.add_hotkey(SHORTCUT_KEYS["PrevResult"].lower(), lambda: self.overlay_window.trigger_fade.emit(ACTIONS["Previous_Result"]))
         
@@ -180,6 +207,19 @@ class MainWindow(QMainWindow):
         self.start_button.setText("Start")
         self.start_button.clicked.disconnect()
         self.start_button.clicked.connect(self._start_overlay)
+
+
+    def _update_source_lang(self):
+        self.controller.update_source_lang(self.source_lang_dropdown.currentText())
+
+
+    def _update_target_lang(self):
+        self.controller.update_target_lang(self.target_lang_dropdown.currentText())
+
+
+    def _update_screen(self):
+        if self.overlay_window:
+            self.overlay_window.update_screen(self.screens[self.screen_list_dropdown.currentIndex()])
 
 
     def _browse_trd_path(self):

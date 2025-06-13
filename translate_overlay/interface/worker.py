@@ -6,7 +6,6 @@ from PySide6.QtCore import QObject, Signal, Slot
 parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent)
 from text_region_detect.craft import CRAFT
-from ocr.florence2 import Florence2OCR
 
 
 class Worker(QObject):
@@ -42,15 +41,16 @@ class TextRegionDetectWorker(Worker):
 
 
 class OCRWorker(Worker):
-    def __init__(self, ocr_model_path, beam_size):
+    def __init__(self, ocr_model, ocr_model_path, beam_size):
         super().__init__()
+        self.ocr_model = ocr_model
         self.ocr_model_path = ocr_model_path
         self.beam_size = beam_size
 
 
     @Slot()
     def init_worker(self):
-        self.ocr = Florence2OCR(
+        self.ocr = self.ocr_model(
             model_path=self.ocr_model_path, 
             beam_size=self.beam_size,
             output_region=True
