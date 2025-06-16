@@ -222,7 +222,3 @@ if __name__ == "__main__":
     translated_text = translator.translate(text, "Chinese", "Any")
     logger.info(translated_text)
 
-
-
-
-

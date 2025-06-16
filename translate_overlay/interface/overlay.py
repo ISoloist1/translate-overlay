@@ -24,6 +24,9 @@ class TranslateLabel(QLabel):
         self.current_text = self.text()
         self.replace_text = None
         self.in_action = False
+        self.setWordWrap(False)
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setTextInteractionFlags(Qt.NoTextInteraction)
         self.translate_done_signal.connect(self.set_translate_text)
 
 
@@ -63,21 +66,43 @@ class TranslateLabel(QLabel):
 
         self.setText(replace_text)
         # self.adjustSize()
-        self.stretch_label()
+        self.fit_text_to_label()
         self.in_action = False
-    
 
-    def stretch_label(self):
-        stretch_list = [QFont.Condensed, QFont.SemiCondensed]
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fit_text_to_label()
+
+
+    def fit_text_to_label(self):
+        """Dynamically adjust font size to fit text within label's width and height."""
+        if not self.text():
+            return
+
+        # Start from a large font size and decrease until it fits
+        min_font_size = 6
+        max_font_size = min(self.height(), self.width())  # Reasonable upper bound
         font = self.font()
         metrics = QFontMetrics(font)
-        font_width = metrics.horizontalAdvance(self.text())
-        label_width = self.width()
+        text = self.text()
 
-        while font_width > label_width and stretch_list:
-            font.setStretch(stretch_list.pop())
+        # Binary search for best font size
+        best_size = min_font_size
+        left, right = min_font_size, max_font_size
+        while left <= right:
+            mid = (left + right) // 2
+            font.setPointSize(mid)
             metrics = QFontMetrics(font)
+            # Use boundingRect for more accurate measurement (includes overhangs)
+            rect = metrics.boundingRect(self.rect(), Qt.AlignCenter, text)
+            if rect.width() <= self.width() and rect.height() <= self.height():
+                best_size = mid
+                left = mid + 1
+            else:
+                right = mid - 1
 
+        font.setPointSize(best_size)
         self.setFont(font)
 
 
@@ -131,14 +156,14 @@ class FullscreenBlackOverlay(QWidget):
         text_label.setStyleSheet((
             "background-color: rgba(0, 0, 0, 180); "
             "color: white; "
-            "text-align: center; "
+            # "text-align: center; "
             "border-radius: 3px; "
-            "padding: 1px; "
-            f"font-size: {font_size}px; "
+            # "padding: 1px; "
+            # f"font-size: {font_size}px; "
         ))
-        text_label.adjustSize()
+        # text_label.adjustSize()
         text_label.move(x_min, y_min)
-        text_label.stretch_label()
+        text_label.fit_text_to_label()
         text_label.show()
 
         return text_label

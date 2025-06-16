@@ -227,7 +227,7 @@ class CRAFT(BaseTextRegionDetection):
 
 
 if __name__ == "__main__":
-    from utils.misc import draw_boxes, merge_text_images
+    from utils.misc import draw_boxes, merge_text_images, group_boxes_to_paragraphs
     # Example usage
     model_path = sys.argv[1]
     image = Image.open(sys.argv[2])
@@ -239,7 +239,7 @@ if __name__ == "__main__":
     # Test crop
     merged_boxes_xyxy = []
 
-    # merged_boxes_xyxy = group_boxes_to_paragraphs_dbscan(boxes_xyxy, eps=30)
+    merged_boxes_xyxy = group_boxes_to_paragraphs(boxes_xyxy)
     # End test crop
 
 
