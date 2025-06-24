@@ -8,7 +8,10 @@ sys.path.append(parent)
 from ocr import TEXT_RECOGNIZERS
 from translate import TRANSLATERS
 from interface.worker import OCRWorker, TranslateWorker, TextRegionDetectWorker
-from utils.misc import pad_image_to_square, merge_text_images, map_florence2_to_trd_result
+from utils.misc import (
+    pad_image_to_square, merge_text_images, 
+    map_florence2_to_trd_result, group_boxes_to_paragraphs
+)
 from utils.logger import setup_logger
 
 
@@ -222,7 +225,8 @@ class Controller(QObject):
             ]
             results.append((item["ocr_result"], trd_box_xyxy))
 
-        self.ocr_done_signal.emit(results)
+        grouped_result, _ = group_boxes_to_paragraphs(results)
+        self.ocr_done_signal.emit(grouped_result)
         self.processing_image = None
         self.image_x_offset = None
         self.image_y_offset = None

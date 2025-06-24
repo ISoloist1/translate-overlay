@@ -1,8 +1,15 @@
-from math import ceil
+import os
+from math import ceil, log, log2
 
 import numpy as np
 from PIL import ImageDraw, Image
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, AgglomerativeClustering
+from scipy.spatial.distance import pdist, squareform
+
+from .logger import setup_logger
+
+
+logger = setup_logger()
 
 
 def draw_boxes(input_image, boxes_xyxy, outline="red"):
@@ -103,27 +110,14 @@ def chunk_image(image, max_width=768, max_height=768, overlap_size=100):
     return cropped_image_list
 
 
-def group_boxes_to_paragraphs(boxes_xyxy, eps=0.05, min_samples=1, gap_ratio=0.5, x_align_thresh=5):
-    """
-    Group line boxes into paragraphs using DBSCAN clustering.
-    eps: maximum distance between lines to be considered in the same paragraph (in pixels).
-    x_weight: scale factor for horizontal distance (smaller = less sensitive to x, larger = more sensitive).
-    Returns a list of merged paragraph boxes [x_min, y_min, x_max, y_max].
-    """
+def group_boxes_to_paragraphs(text_box_list, eps=0.2, gap_ratio=0.5, x_align_thresh=10):
+
     def normalize(value, threshold=10):
         return round(value / threshold) * threshold
 
-    def feature_scale(arr):
-        median = np.median(arr)
-        q1 = np.percentile(arr, 15)
-        q3 = np.percentile(arr, 85)
-        iqr = q3 - q1 if q3 > q1 else 1  # avoid division by zero
-        return (arr - median) / iqr
-
+    boxes_xyxy = [box for _, box in text_box_list]
     if not boxes_xyxy:
         return []
-
-    boxes_xyxy.sort(key=lambda box: (normalize(box[0]), normalize(box[1])))
 
     height_list = [i[3] - i[1] for i in boxes_xyxy]
     x_mins = [box[0] for box in boxes_xyxy]
@@ -142,55 +136,63 @@ def group_boxes_to_paragraphs(boxes_xyxy, eps=0.05, min_samples=1, gap_ratio=0.5
         height = y_max - y_min
         y_center = y_min + height / 2
         box_features.append([
+            # (normalize(x_min, x_align_thresh) - min_x) / width_range * 1.0,   # left alignment, normalized
             (x_min - min_x) / width_range * 1.0,   # left alignment, normalized
             (y_center - min_y) / height_range * 1.0, # vertical position, normalized
-            (height - min_height) / height_range * 1.0 # height, normalized
+            # (height - min_height) / height_range * 1.0 # height, normalized
         ])
     box_features = np.array(box_features)
-    scaled_features = feature_scale(box_features)
 
-    clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean').fit(scaled_features)
+    dist_matrix = squareform(pdist(box_features, metric='euclidean'))
+    for i in dist_matrix.tolist():
+        print([f"{j:.5}".ljust(7) for j in i])
 
-    paragraphs = []
+    distance_threshold = min(0.3, 1 / log(max(1, len(boxes_xyxy))))
+    logger.info(f"Distance threshold: {distance_threshold}")
+    clustering = AgglomerativeClustering(
+        n_clusters=None, 
+        distance_threshold=distance_threshold,
+        linkage="ward"
+    ).fit(box_features)
+
+    paragraph_groups = []
+    original_groups = []
     for label in set(clustering.labels_):
         indices = np.where(clustering.labels_ == label)[0]
-        group = [boxes_xyxy[i] for i in indices]
+        group = [text_box_list[i] for i in indices]
         # Sort group by y_min
-        group = sorted(group, key=lambda b: b[1])
+        group = sorted(group, key=lambda tb: tb[1][1])
+        original_groups.append(group)  # Save original group
 
         # Post-process: split group if gap too large or left alignment differs
         current_para = [group[0]]
         for prev, curr in zip(group, group[1:]):
-            prev_height = prev[3] - prev[1]
-            curr_height = curr[3] - curr[1]
+            prev_box = prev[1]
+            curr_box = curr[1]
+            prev_height = prev_box[3] - prev_box[1]
+            curr_height = curr_box[3] - curr_box[1]
             min_h = min(prev_height, curr_height)
-            vertical_gap = curr[1] - prev[3]
+            vertical_gap = curr_box[1] - prev_box[3]
 
             # Normalized x_min for left alignment
-            prev_x_norm = normalize(prev[0], x_align_thresh)
-            curr_x_norm = normalize(curr[0], x_align_thresh)
+            prev_x_norm = prev_box[0]
+            curr_x_norm = curr_box[0]
 
             # Split if vertical gap too large or left alignment differs
-            if vertical_gap > gap_ratio * min_h or prev_x_norm != curr_x_norm:
-                # Finish current paragraph
-                x_min = min(b[0] for b in current_para)
-                y_min = min(b[1] for b in current_para)
-                x_max = max(b[2] for b in current_para)
-                y_max = max(b[3] for b in current_para)
-                paragraphs.append([x_min, y_min, x_max, y_max])
+            if vertical_gap > gap_ratio * min_h or x_align_thresh < abs(prev_x_norm - curr_x_norm):
+                paragraph_groups.append(current_para)
                 current_para = [curr]
             else:
                 current_para.append(curr)
-                
+
         # Add last paragraph in group
         if current_para:
-            x_min = min(b[0] for b in current_para)
-            y_min = min(b[1] for b in current_para)
-            x_max = max(b[2] for b in current_para)
-            y_max = max(b[3] for b in current_para)
-            paragraphs.append([x_min, y_min, x_max, y_max])
+            paragraph_groups.append(current_para)
 
-    return paragraphs
+    logger.info(f"Num cluster labels: {len(set(clustering.labels_))}")
+    logger.info(f"Num final groups: {len(paragraph_groups)}")
+
+    return paragraph_groups, original_groups
 
 
 def is_mostly_inside(rect1, rect2, threshold=0.8):
@@ -257,10 +259,22 @@ if __name__ == "__main__":
 
 
     # Test box merge
+    text_box_list = [("", i) for i in boxes_xyxy]
     merged_boxes_xyxy = []
 
-    merged_boxes_xyxy = group_boxes_to_paragraphs(boxes_xyxy)
+    grouped_boxes_xyxy = group_boxes_to_paragraphs(text_box_list)
+    for i in grouped_boxes_xyxy:
+        box_list = [j[1] for j in i]
+        box_list_transposed = list(zip(*box_list))
+
+        merged_boxes_xyxy.append((
+            min(box_list_transposed[0]), 
+            min(box_list_transposed[1]), 
+            max(box_list_transposed[2]), 
+            max(box_list_transposed[3]), 
+        ))
     # End test box merge
+    print(merged_boxes_xyxy)
 
 
     image = draw_boxes(image, boxes_xyxy, "yellow")

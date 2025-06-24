@@ -237,9 +237,32 @@ if __name__ == "__main__":
 
 
     # Test crop
+    text_box_list = [("", i) for i in boxes_xyxy]
     merged_boxes_xyxy = []
+    merged_original_cluster_groups = []
 
-    merged_boxes_xyxy = group_boxes_to_paragraphs(boxes_xyxy)
+    grouped_boxes_xyxy, original_cluster_groups = group_boxes_to_paragraphs(text_box_list)
+    for i in grouped_boxes_xyxy:
+        box_list = [j[1] for j in i]
+        box_list_transposed = list(zip(*box_list))
+
+        merged_boxes_xyxy.append((
+            min(box_list_transposed[0]), 
+            min(box_list_transposed[1]), 
+            max(box_list_transposed[2]), 
+            max(box_list_transposed[3]), 
+        ))
+
+    for i in original_cluster_groups:
+        box_list = [j[1] for j in i]
+        box_list_transposed = list(zip(*box_list))
+
+        merged_original_cluster_groups.append((
+            min(box_list_transposed[0]), 
+            min(box_list_transposed[1]), 
+            max(box_list_transposed[2]), 
+            max(box_list_transposed[3]), 
+        ))
     # End test crop
 
 
@@ -258,6 +281,7 @@ if __name__ == "__main__":
 
 
     image = draw_boxes(image, boxes_xyxy, "yellow")
+    image = draw_boxes(image, merged_original_cluster_groups, "green")
     image = draw_boxes(image, merged_boxes_xyxy, "red")
 
     logger.info(boxes_xyxy)
