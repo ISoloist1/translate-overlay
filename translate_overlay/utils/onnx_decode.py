@@ -1,5 +1,6 @@
 import heapq
 import numpy as np
+from typing import Dict
 
 
 def log_softmax(x, axis=-1) -> np.ndarray:
@@ -170,3 +171,122 @@ def batched_beam_search_with_past(
     else:
         return beams[0][1]
 
+def batched_beam_search_with_past_new(
+    dec_merged_session: object, 
+    input_name: str,
+    start_tokens: np.ndarray,
+    decoder_inputs: Dict,
+    decoder_cache_name_dict: Dict,
+    max_length: int,
+    beam_size: int,
+    eos_id: int,
+    embed_function: object = None,
+) -> np.ndarray:
+    """
+    Batched beam search for decoder with past_key_values support (merged decoder model).
+    """
+
+    # Each beam: (score, sequence, past_key_values)
+    batch_input_ids = start_tokens  # (beam, input_ids_size)
+    beams = [(0.0, np.array([[]], dtype=np.int64), None)]
+    finished = []
+    first_step = True
+    
+    # Could implement:
+    #   Repetition Penalty
+    #   No repeat N-gram
+
+    for _ in range(max_length):
+        # Prepare ONNX inputs
+        decoder_inputs[input_name] = batch_input_ids
+
+        if embed_function is not None:
+            embed_output = embed_function(batch_input_ids)
+            decoder_inputs.update(embed_output)
+
+        if not first_step:
+            for cache_name in decoder_cache_name_dict:
+                stacked = np.stack([past[cache_name] for _, _, past in beams], axis=0)
+                decoder_inputs[decoder_cache_name_dict[cache_name]] = stacked
+
+        # Run decoder
+        outputs = dec_merged_session.run(None, decoder_inputs)
+        next_token_logits = outputs[0][:, -1, :]  # (beam, vocab_size)
+
+        # Parse new past key value
+        output_names = [node.name for node in dec_merged_session.get_outputs()]
+        output_dicts = []
+        for b in range(len(beams)):
+            output_dict = {}
+            for idx, name in enumerate(output_names):  # skip logits
+                if name not in decoder_cache_name_dict:
+                    continue
+                if outputs[idx].shape[0] == 0:
+                    output_dict[name] = decoder_inputs[decoder_cache_name_dict[name]][b]
+                else:
+                    output_dict[name] = outputs[idx][b]
+            output_dicts.append(output_dict)
+
+        # Get new output token
+        all_candidates = []
+        for beam_idx, (score, seq, past) in enumerate(beams):
+            if seq.shape[1] > 2 and seq[0, -1] == eos_id:
+                finished.append((score, seq))
+                continue
+
+            log_probs = log_softmax(next_token_logits[beam_idx], axis=-1)
+            topk_ids = np.argsort(log_probs)[::-1][:beam_size]
+
+            for token_id in topk_ids:
+                new_seq = np.concatenate([seq, [[token_id]]], axis=-1)
+                new_score = score + log_probs[token_id]
+                new_past = output_dicts[beam_idx]
+                all_candidates.append((new_score, new_seq, new_past))
+
+        # Keep only the best beam_size sequences
+        beams = heapq.nlargest(beam_size, all_candidates, key=lambda x: x[0])
+        # Prepare batch inputs for all beams
+        batch_input_ids = np.concatenate([seq[:, -1:] for _, seq, _ in beams], axis=0)  # (beam, 1)
+        
+        if "position_ids" in decoder_inputs:
+            if first_step:
+                decoder_inputs["position_ids"] = np.repeat(decoder_inputs["position_ids"][:, -1:] + 1, beam_size, axis=0)
+            else:
+                decoder_inputs["position_ids"] = decoder_inputs["position_ids"][:, -1:] + 1
+
+        if "encoder_hidden_states" in decoder_inputs:
+            if first_step:
+                decoder_inputs["encoder_hidden_states"] = np.repeat(
+                    decoder_inputs["encoder_hidden_states"], beam_size, axis=0
+                )
+
+        if "encoder_attention_mask" in decoder_inputs:
+            if first_step:
+                decoder_inputs["encoder_attention_mask"] = np.repeat(
+                    decoder_inputs["encoder_attention_mask"], beam_size, axis=0
+                )
+
+        if "use_cache_branch" in decoder_inputs:
+            if first_step:
+                decoder_inputs["use_cache_branch"] = np.array([True])
+
+        first_step = False
+
+        # Early stopping
+        if finished:
+            best_finished_score = max(score for score, _ in finished)
+            # Check if any unfinished beam is better than the best finished beam
+            best_unfinished_score = max(
+                score for score, _, _ in beams
+            )
+            if best_finished_score >= best_unfinished_score:
+                break
+
+        if all(seq[0, -1] == eos_id for _, seq, _ in beams):
+            finished.extend(beams)
+            break
+
+    if finished:
+        return max(finished, key=lambda x: x[0])[1]
+    else:
+        return beams[0][1]

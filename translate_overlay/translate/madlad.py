@@ -1,16 +1,15 @@
 import os
 import sys
 import time
-import heapq
+from typing import List
+
 import numpy as np
 import onnxruntime as ort
 import sentencepiece as spm
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from translate.base import BaseTranslator
-from utils.onnx_decode import log_softmax, create_init_past_key_values, batched_beam_search_with_past
-from utils.logger import setup_logger
+from translate_overlay.translate.base import BaseTranslator
+from translate_overlay.utils.onnx_decode import create_init_past_key_values, batched_beam_search_with_past_new
+from translate_overlay.utils.logger import setup_logger
 
 
 logger = setup_logger()
@@ -55,7 +54,7 @@ class MadladTranslator(BaseTranslator):
         self.bos_id = 1
         self.eos_id = 2
 
-        self.max_length = 100
+        self.max_length = 1000
 
         self.num_layers = 32
         self.num_heads = 16
@@ -75,18 +74,16 @@ class MadladTranslator(BaseTranslator):
         """
 
         encoder_model_path = os.path.join(self.model_path, "encoder_model.onnx")
-        decoder_model_path = os.path.join(self.model_path, "decoder_model.onnx")
         decoder_merged_model_path = os.path.join(self.model_path, "decoder_model_merged.onnx")
         spm_model_path = os.path.join(self.model_path, "spiece.model")
 
-        for model_path in [encoder_model_path, decoder_model_path, decoder_merged_model_path, spm_model_path]:
+        for model_path in [encoder_model_path, decoder_merged_model_path, spm_model_path]:
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"Model not found at {model_path}")
         
         sess_options = ort.SessionOptions()
         sess_options.enable_cpu_mem_arena = False
         self.enc_session = ort.InferenceSession(encoder_model_path, sess_options=sess_options)
-        # self.dec_session = ort.InferenceSession(decoder_model_path)
         self.dec_merged_session = ort.InferenceSession(decoder_merged_model_path, sess_options=sess_options)
         self.sp_model.Load(spm_model_path)
 
@@ -111,33 +108,53 @@ class MadladTranslator(BaseTranslator):
             }
         )
         encoder_hidden_states = encoder_outputs[0]
-        init_past_key_values = create_init_past_key_values(self.num_heads, self.head_dim).squeeze(0)  # (1, num_heads, 0, head_dim)
+        input_ids = np.array([[self.unk_id]], dtype=np.int64)
+        init_past_key_values = create_init_past_key_values(self.num_heads, self.head_dim)  # (1, num_heads, 0, head_dim)
         
-        if self.beam_size is None:
-            # Greedy search
-            return self._greedy_search(encoder_hidden_states, encoder_attention_mask)
-        else:
-            # Beam search
-            return batched_beam_search_with_past(
-                self.dec_merged_session,
-                "input_ids",
-                encoder_hidden_states,
-                encoder_attention_mask,
-                init_past_key_values,
-                self.max_length,
-                self.beam_size,
-                self.unk_id,
-                self.eos_id,
-                self.num_layers,
-            )
+        decoder_cache_name_dict = {
+            f'present.{layer}.{kv}': f'past_key_values.{layer}.{kv}'
+            for layer in range(self.num_layers)
+            for kv in ('encoder.key', 'encoder.value', 'decoder.key', 'decoder.value')
+        }
+
+        past_key_values = {
+            cache_name: init_past_key_values
+            for cache_name in decoder_cache_name_dict.values()
+        }
+
+        decoder_inputs = {
+            "encoder_hidden_states": np.repeat(encoder_hidden_states, 1, axis=0),
+            "encoder_attention_mask": np.repeat(encoder_attention_mask, 1, axis=0),
+            "use_cache_branch": np.array([False]),
+            **past_key_values
+        }
+
+        return batched_beam_search_with_past_new(
+            self.dec_merged_session,
+            "input_ids",
+            input_ids,
+            decoder_inputs,
+            decoder_cache_name_dict,
+            self.max_length,
+            self.beam_size,
+            self.eos_id,
+        )
+    
+
+    def encode_tokens(self, text: str) -> List:
+        return self.sp_model.EncodeAsPieces(text)
+    
+
+    def decode_tokens(self, tokens: List) -> str:
+        return self.sp_model.DecodePieces(tokens)
 
 
-    def _tokenize(self, text: str) -> np.ndarray:
+    def _encode_token_ids(self, text: str) -> List:
         """
         Tokenize the input text using the SentencePiece model.
 
         :param text: The text to tokenize.
-        :return: Tokenized text as a numpy array.
+        :return: Tokenized text as a list.
         """
 
         tokens = self.sp_model.EncodeAsIds(text)
@@ -145,15 +162,15 @@ class MadladTranslator(BaseTranslator):
         return tokens
     
 
-    def _decode_tokens(self, tokens: np.ndarray) -> str:
+    def _decode_token_ids(self, token_ids: List) -> str:
         """
         Decode the tokenized text back to string using the SentencePiece model.
 
-        :param tokens: The tokenized text as a numpy array.
+        :param tokens: The tokenized text as a list.
         :return: Decoded text as a string.
         """
 
-        return self.sp_model.DecodeIds(tokens)
+        return self.sp_model.DecodeIds(token_ids)
 
 
     def translate(self, text: str, target_lang: str, source_lang: str) -> str:
@@ -170,7 +187,7 @@ class MadladTranslator(BaseTranslator):
 
         t0 = time.time()
         text = f"{TARGET_LANG_MAP[target_lang]} " + text.strip()
-        input_tokens = self._tokenize(text)
+        input_tokens = self._encode_token_ids(text)
         self.max_length = len(input_tokens) * 2
         input_ids = np.array([input_tokens], dtype=np.int64)
         t1 = time.time()
@@ -182,7 +199,7 @@ class MadladTranslator(BaseTranslator):
         logger.info(f"Inference: {t3 - t2:.4f} seconds")
 
         output_tokens = [item for item in output_ids[0].tolist() if item not in [self.unk_id, self.bos_id, self.eos_id]]
-        output_text = self._decode_tokens(output_tokens)
+        output_text = self._decode_token_ids(output_tokens)
         t4 = time.time()
         logger.info(f"Decoding: {t4 - t3:.4f} seconds")
 

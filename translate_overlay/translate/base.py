@@ -39,3 +39,13 @@ class BaseTranslator(ABC):
         """
         
         pass
+
+
+    @abstractmethod
+    def encode_tokens(self) -> list:
+        pass
+
+
+    @abstractmethod
+    def decode_tokens(self) -> str:
+        pass
