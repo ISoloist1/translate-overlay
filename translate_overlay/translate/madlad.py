@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 from typing import List
 
 import numpy as np
@@ -9,7 +8,7 @@ import sentencepiece as spm
 
 from translate_overlay.translate.base import BaseTranslator
 from translate_overlay.utils.onnx_decode import create_init_past_key_values, batched_beam_search_with_past_new
-from translate_overlay.utils.logger import setup_logger
+from translate_overlay.utils.logger import setup_logger, log_timing
 
 
 logger = setup_logger()
@@ -60,12 +59,10 @@ class MadladTranslator(BaseTranslator):
         self.num_heads = 16
         self.head_dim = 128
         
-        t0 = time.time()
         self._load_model()
-        t1 = time.time()
-        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
 
+    @log_timing(logger, __name__, "Load model")
     def _load_model(self) -> None:
         """
         Load the ONNX model from the specified path.
@@ -88,6 +85,7 @@ class MadladTranslator(BaseTranslator):
         self.sp_model.Load(spm_model_path)
 
 
+    @log_timing(logger, __name__, "Inference")
     def _inference(self, input_ids: np.ndarray) -> np.ndarray:
         """
         Perform inference using the ONNX model.
@@ -185,25 +183,15 @@ class MadladTranslator(BaseTranslator):
         
         assert target_lang in TARGET_LANG_MAP, f"Unsupported target language: {target_lang}"
 
-        t0 = time.time()
         text = f"{TARGET_LANG_MAP[target_lang]} " + text.strip()
         input_tokens = self._encode_token_ids(text)
         self.max_length = len(input_tokens) * 2
         input_ids = np.array([input_tokens], dtype=np.int64)
-        t1 = time.time()
-        logger.info(f"Tokenization: {t1 - t0:.4f} seconds")
 
-        t2 = time.time()
         output_ids = self._inference(input_ids)
-        t3 = time.time()
-        logger.info(f"Inference: {t3 - t2:.4f} seconds")
 
         output_tokens = [item for item in output_ids[0].tolist() if item not in [self.unk_id, self.bos_id, self.eos_id]]
         output_text = self._decode_token_ids(output_tokens)
-        t4 = time.time()
-        logger.info(f"Decoding: {t4 - t3:.4f} seconds")
-
-        logger.info(f"Total: {t4 - t0:.4f} seconds")
 
         return output_text
     

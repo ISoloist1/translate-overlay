@@ -131,7 +131,7 @@ class TranslateWorker(Worker):
         # Tokenize the text
         pieces = self.translator.encode_tokens(text)
 
-        segments = [self.translator.decode_tokens(segment) for segment in split_text_tokens(pieces)]
+        segments = [self.translator.decode_tokens(segment) for segment in split_text_tokens(pieces, num_segments)]
 
         return segments
 

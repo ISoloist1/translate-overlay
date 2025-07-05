@@ -1,7 +1,6 @@
 import os
 import re
 import sys
-import time
 import json
 from typing import List
 
@@ -11,7 +10,7 @@ from tokenizers import Tokenizer
 
 from translate_overlay.translate.base import BaseTranslator
 from translate_overlay.utils.onnx_decode import create_init_past_key_values, batched_beam_search_with_past_new
-from translate_overlay.utils.logger import setup_logger
+from translate_overlay.utils.logger import setup_logger, log_timing
 
 
 logger = setup_logger()
@@ -64,10 +63,7 @@ class Gemma3Translator(BaseTranslator):
         self.num_heads = 1
         self.head_dim = 256
         
-        t0 = time.time()
         self._load_model()
-        t1 = time.time()
-        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
         # self.prompt_template = (
         #     '<start_of_turn>user\nYou are a professional translator. Please help translating input text to {language} '
@@ -107,6 +103,7 @@ class Gemma3Translator(BaseTranslator):
         self.result_regex = re.compile(r'```json(.+?)```', re.S)
 
 
+    @log_timing(logger, __name__, "Load model")
     def _load_model(self) -> None:
         """
         Load the ONNX model from the specified path.
@@ -128,6 +125,7 @@ class Gemma3Translator(BaseTranslator):
         self.tokenizer = Tokenizer.from_file(tokenizer_path)
 
 
+    @log_timing(logger, __name__, "Inference")
     def _inference(self, input_ids: np.ndarray) -> np.ndarray:
         """
         Perform inference using the ONNX model.
@@ -233,26 +231,16 @@ class Gemma3Translator(BaseTranslator):
         
         assert target_lang in TARGET_LANG_MAP, f"Unsupported target language: {target_lang}"
 
-        t0 = time.time()
         text = self.prompt_template.format(language=target_lang, text=text)
         input_tokens = self._encode_token_ids(text)
         self.max_length = len(input_tokens) * 2
         input_ids = np.array([input_tokens], dtype=np.int64)
-        t1 = time.time()
-        logger.info(f"Tokenization: {t1 - t0:.4f} seconds")
 
-        t2 = time.time()
         output_ids = self._inference(input_ids)
-        t3 = time.time()
-        logger.info(f"Inference: {t3 - t2:.4f} seconds")
 
         output_tokens = [item for item in output_ids[0].tolist() if item not in [self.eos_id]]
         output_text = self._decode_token_ids(output_tokens)
         output_text = self._parse_response(output_text)
-        t4 = time.time()
-        logger.info(f"Decoding: {t4 - t3:.4f} seconds")
-
-        logger.info(f"Total: {t4 - t0:.4f} seconds")
 
         return output_text
 

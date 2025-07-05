@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import math
 
 import cv2
@@ -9,7 +8,7 @@ from PIL import Image
 import onnxruntime as ort
 
 from translate_overlay.text_region_detect.base import BaseTextRegionDetection
-from translate_overlay.utils.logger import setup_logger
+from translate_overlay.utils.logger import setup_logger, log_timing
 
 
 logger = setup_logger()
@@ -19,12 +18,10 @@ class CRAFT(BaseTextRegionDetection):
     def __init__(self, model_path: str):
         self.model_path = model_path
 
-        t0 = time.time()
         self._load_model()
-        t1 = time.time()
-        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
 
+    @log_timing(logger, __name__, "Load model")
     def _load_model(self):
         reco_model_path = os.path.join(self.model_path, "craftmlt25k.onnx")
         refine_model_path = os.path.join(self.model_path, "refine.onnx")
@@ -43,6 +40,7 @@ class CRAFT(BaseTextRegionDetection):
         self.refine_session = ort.InferenceSession(refine_model_path, sess_options=sess_options)
         
 
+    @log_timing(logger, __name__, "Preprocess")
     def _preprocess(self, input_image):
         def resize_aspect_retio(input_image, square_size, mag_ratio):
             width, height = input_image.size
@@ -98,6 +96,7 @@ class CRAFT(BaseTextRegionDetection):
         return processed_image_array, ratio
 
 
+    @log_timing(logger, __name__, "Inference")
     def _inference(self, input_array):
         reco_input_name = self.reco_session.get_inputs()[0].name
         y, feature = self.reco_session.run(None, {reco_input_name: input_array})
@@ -109,6 +108,7 @@ class CRAFT(BaseTextRegionDetection):
         return y, y_refiner
 
 
+    @log_timing(logger, __name__, "Postprocess")
     def _postprocess(self, infer_output, refine_output, input_image, ratio):
         def getDetBoxes_core(textmap, linkmap, text_threshold, link_threshold, low_text):
             # prepare data
@@ -202,22 +202,13 @@ class CRAFT(BaseTextRegionDetection):
     def recognize(self, input_image):
         
         # Preprocess the image
-        t0 = time.time()
         input_array, ratio = self._preprocess(input_image)
-        t1 = time.time()
-        logger.info(f"Preprocess: {t1 - t0:.4f} seconds")
         
         # Perform inference
-        t2 = time.time()
         infer_output, refine_output = self._inference(input_array)
-        t3 = time.time()
-        logger.info(f"Inference: {t3 - t2:.4f} seconds")
         
         # Postprocess the outputs to get the final text
-        t4 = time.time()
         boxes_xyxy = self._postprocess(infer_output, refine_output, input_image, ratio)
-        t5 = time.time()
-        logger.info(f"Postprocess: {t5 - t4:.4f} seconds")
         
         return boxes_xyxy
 

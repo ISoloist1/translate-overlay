@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import numpy as np
 import onnxruntime as ort
 from typing import Any, List, Dict, Tuple
@@ -9,7 +8,7 @@ from transformers import AutoProcessor
 
 from translate_overlay.ocr.base import BaseOCR
 from translate_overlay.utils.onnx_decode import create_init_past_key_values, greedy_search, batched_beam_search_with_past
-from translate_overlay.utils.logger import setup_logger
+from translate_overlay.utils.logger import setup_logger, log_timing
 
 
 logger = setup_logger()
@@ -49,12 +48,10 @@ class Florence2OCR(BaseOCR):
         # self.num_heads = 16
         # self.head_dim = 64
 
-        t0 = time.time()
         self._load_model()
-        t1 = time.time()
-        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
     
+    @log_timing(logger, __name__, "Load model")
     def _load_model(self) -> None:
         """
         Load the Florence2 model and processor.
@@ -116,6 +113,7 @@ class Florence2OCR(BaseOCR):
         return inputs_embeds, attention_mask
 
 
+    @log_timing(logger, __name__, "Inference")
     def _inference(self, inputs_text: np.ndarray, inputs_pixel_values: np.ndarray) -> np.ndarray:
         """
         Perform inference using the ONNX model.
@@ -170,6 +168,7 @@ class Florence2OCR(BaseOCR):
             )
     
 
+    @log_timing(logger, __name__, "Preprocess")
     def _preprocess(self, image) -> np.ndarray:
         """
         Preprocess the input image for the model.
@@ -193,6 +192,7 @@ class Florence2OCR(BaseOCR):
         return inputs
     
 
+    @log_timing(logger, __name__, "Postprocess")
     def _postprocess(self, image, outputs: np.ndarray) -> str:
         """
         Postprocess the model outputs to get the final text.
@@ -225,22 +225,13 @@ class Florence2OCR(BaseOCR):
         """
         
         # Preprocess the image
-        t0 = time.time()
         inputs = self._preprocess(image)
-        t1 = time.time()
-        logger.info(f"Preprocess: {t1 - t0:.4f} seconds")
         
         # Perform inference
-        t2 = time.time()
         outputs = self._inference(inputs["input_ids"], inputs["pixel_values"])
-        t3 = time.time()
-        logger.info(f"Inference: {t3 - t2:.4f} seconds")
         
         # Postprocess the outputs to get the final text
-        t4 = time.time()
         parsed_results = self._postprocess(image, outputs)
-        t5 = time.time()
-        logger.info(f"Postprocess: {t5 - t4:.4f} seconds")
         
         return parsed_results
 
