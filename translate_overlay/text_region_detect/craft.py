@@ -8,10 +8,8 @@ import numpy as np
 from PIL import Image
 import onnxruntime as ort
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from text_region_detect.base import BaseTextRegionDetection
-from utils.logger import setup_logger
+from translate_overlay.text_region_detect.base import BaseTextRegionDetection
+from translate_overlay.utils.logger import setup_logger
 
 
 logger = setup_logger()
@@ -192,11 +190,11 @@ class CRAFT(BaseTextRegionDetection):
         w, h = input_image.size
 
         for box in adjusted_boxes:
-            x_min = max(int(min(box, key=lambda x: x[0])[0]), 1)
-            x_max = min(int(max(box, key=lambda x: x[0])[0]), w-1)
-            y_min = max(int(min(box, key=lambda x: x[1])[1]), 3)
-            y_max = min(int(max(box, key=lambda x: x[1])[1]), h-2)    
-            boxes_xxyy.append([x_min-1, y_min-1, x_max, y_max])
+            x_min = max(math.floor(min(box, key=lambda x: x[0])[0]), 1)
+            x_max = min(math.ceil(max(box, key=lambda x: x[0])[0]), w-1)
+            y_min = max(math.floor(min(box, key=lambda x: x[1])[1]), 3)
+            y_max = min(math.ceil(max(box, key=lambda x: x[1])[1]), h-2)    
+            boxes_xxyy.append([x_min-1, y_min-1, x_max+1, y_max+1])
 
         return boxes_xxyy
 
