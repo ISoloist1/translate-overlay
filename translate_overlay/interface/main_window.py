@@ -1,20 +1,17 @@
-import os
 import sys
 
 import keyboard
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton,
-    QHBoxLayout, QVBoxLayout, QFileDialog, QSpinBox, QComboBox
+    QHBoxLayout, QVBoxLayout, QFileDialog, QSpinBox, QComboBox, QMessageBox
 )
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from translate import TRANSLATERS
-from ocr import TEXT_RECOGNIZERS
-from interface.overlay import FullscreenBlackOverlay
-from interface.controller import Controller
-from interface.const import SHORTCUT_KEYS, ACTIONS
+from translate_overlay.translate import TRANSLATERS
+from translate_overlay.ocr import TEXT_RECOGNIZERS
+from translate_overlay.interface.overlay import FullscreenBlackOverlay
+from translate_overlay.interface.controller import Controller
+from translate_overlay.interface.const import SHORTCUT_KEYS, ACTIONS
 
 
 class MainWindow(QMainWindow):
@@ -94,7 +91,6 @@ class MainWindow(QMainWindow):
         # Source language dropdown
         source_lang_layout = QHBoxLayout()
         self.source_lang_dropdown = QComboBox()
-        self.source_lang_dropdown.currentIndexChanged.connect(self._update_source_lang)
         self.source_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].source_lang_list()
         self.source_lang_dropdown.addItems(self.source_langs)
         source_lang_layout.addWidget(QLabel("Source Language:"))
@@ -104,7 +100,6 @@ class MainWindow(QMainWindow):
         # Target language dropdown
         target_lang_layout = QHBoxLayout()
         self.target_lang_dropdown = QComboBox()
-        self.target_lang_dropdown.currentIndexChanged.connect(self._update_target_lang)
         self.target_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].target_lang_list()
         self.target_lang_dropdown.addItems(self.target_langs)
         target_lang_layout.addWidget(QLabel("Target Language:"))
@@ -130,10 +125,15 @@ class MainWindow(QMainWindow):
         screen_list_layout = QHBoxLayout()
         self.screen_list_dropdown = QComboBox()
         self.screen_list_dropdown.addItems([screen.name() for screen in self.screens])
-        self.screen_list_dropdown.currentIndexChanged.connect(self._update_screen)
         screen_list_layout.addWidget(QLabel("Screen:"))
         screen_list_layout.addWidget(self.screen_list_dropdown)
         main_layout.addLayout(screen_list_layout)
+
+
+        self.translate_model_dropdown.currentIndexChanged.connect(self._update_lang_list)
+        self.source_lang_dropdown.currentIndexChanged.connect(self._update_source_lang)
+        self.target_lang_dropdown.currentIndexChanged.connect(self._update_target_lang)
+        self.screen_list_dropdown.currentIndexChanged.connect(self._update_screen)
 
 
         # Instruction label
@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.start_button, alignment=Qt.AlignRight)
         
         self.overlay_window = None
-        self.controller = Controller()
+        self.controller = None
 
 
     def closeEvent(self, event):
@@ -165,7 +165,9 @@ class MainWindow(QMainWindow):
             self.start_button.setEnabled(False)
             self.start_button.setText("Starting...")
 
+            self.controller = Controller()
             self.controller.init_finished.connect(self._on_init_finished)
+            self.controller.error_signal.connect(self._handle_error_message)
             self.controller.init_worker(
                 self.trd_path_edit.text(),
                 self.ocr_model_dropdown.currentText(),
@@ -193,28 +195,54 @@ class MainWindow(QMainWindow):
     
 
     def _stop_overlay(self):
-        self.controller.clean_up()
+        self.start_button.setEnabled(False)
+        
+        if self.controller is not None:
+            self.controller.clean_up()
+            self.controller.deleteLater()
+            self.controller = None
 
         if self.overlay_window is not None:
             self.overlay_window.close()
             # _overlay_closed will be called by destroyed signal
+
+        self.start_button.setText("Start")
+        self.start_button.clicked.disconnect()
+        self.start_button.clicked.connect(self._start_overlay)
+
+        self.start_button.setEnabled(True)
 
 
     def _overlay_closed(self):
         self.overlay_window = None
         keyboard.remove_hotkey(SHORTCUT_KEYS["Overlay"].lower())
 
-        self.start_button.setText("Start")
-        self.start_button.clicked.disconnect()
-        self.start_button.clicked.connect(self._start_overlay)
+
+    def _handle_error_message(self, error_message):
+        self._stop_overlay()
+
+        msg_box = QMessageBox(QMessageBox.Critical, error_message.source, error_message.traceback, parent=self)
+        msg_box.setWindowFlag(Qt.WindowStaysOnTopHint)
+        msg_box.exec()
+        
+
+    def _update_lang_list(self):
+        self.source_lang_dropdown.clear()
+        self.target_lang_dropdown.clear()
+        self.source_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].source_lang_list()
+        self.source_lang_dropdown.addItems(self.source_langs)
+        self.target_langs = TRANSLATERS[self.translate_model_dropdown.currentText()].target_lang_list()
+        self.target_lang_dropdown.addItems(self.target_langs)
 
 
     def _update_source_lang(self):
-        self.controller.update_source_lang(self.source_lang_dropdown.currentText())
+        if self.controller:
+            self.controller.update_source_lang(self.source_lang_dropdown.currentText())
 
 
     def _update_target_lang(self):
-        self.controller.update_target_lang(self.target_lang_dropdown.currentText())
+        if self.controller:
+            self.controller.update_target_lang(self.target_lang_dropdown.currentText())
 
 
     def _update_screen(self):
@@ -245,7 +273,9 @@ if __name__ == "__main__":
     window = MainWindow(
         trd_path="E:\\work\\1-personal\\CRAFT-onnx\\models",
         ocr_path="E:\\work\\1-personal\\Florence-2-base\\onnx\\onnx",
-        translate_path="E:\\work\\1-personal\\madlad400-3b-mt\\onnx\\quantization\\optimum\\with_accelerate_weight_dedup",
+        # translate_path="E:\\work\\1-personal\\madlad400-3b-mt\\onnx\\quantization\\optimum\\with_accelerate_weight_dedup",
+        # translate_path="E:\\work\\1-personal\\gemma-3-1b-it-ONNX\\onnx",
+        translate_path="E:\\work\\1-personal\\gemma-3n-E2B-it-ONNX\\onnx",
     )
     window.show()
     sys.exit(app.exec())

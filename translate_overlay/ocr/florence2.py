@@ -1,17 +1,14 @@
 import os
 import sys
-import time
 import numpy as np
 import onnxruntime as ort
 from typing import Any, List, Dict, Tuple
 from tokenizers import Tokenizer
 from transformers import AutoProcessor
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from ocr.base import BaseOCR
-from utils.onnx_decode import create_init_past_key_values, greedy_search, batched_beam_search_with_past
-from utils.logger import setup_logger
+from translate_overlay.ocr.base import BaseOCR
+from translate_overlay.utils.onnx_decode import create_init_past_key_values, greedy_search, batched_beam_search_with_past
+from translate_overlay.utils.logger import setup_logger, log_timing
 
 
 logger = setup_logger()
@@ -51,19 +48,16 @@ class Florence2OCR(BaseOCR):
         # self.num_heads = 16
         # self.head_dim = 64
 
-        t0 = time.time()
         self._load_model()
-        t1 = time.time()
-        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
     
+    @log_timing(logger, __name__, "Load model")
     def _load_model(self) -> None:
         """
         Load the Florence2 model and processor.
         """
 
         encoder_model_path = os.path.join(self.model_path, "encoder_model_uint8.onnx")
-        decoder_model_path = os.path.join(self.model_path, "decoder_model_uint8.onnx")
         decoder_merged_model_path = os.path.join(self.model_path, "decoder_model_merged_uint8.onnx")
         embedding_model_path = os.path.join(self.model_path, "embed_tokens_uint8.onnx")
         vision_model_path = os.path.join(self.model_path, "vision_encoder_uint8.onnx")
@@ -71,7 +65,6 @@ class Florence2OCR(BaseOCR):
 
         for model_path in [
             encoder_model_path,
-            decoder_model_path,
             decoder_merged_model_path,
             embedding_model_path,
             vision_model_path,
@@ -82,8 +75,7 @@ class Florence2OCR(BaseOCR):
             
         sess_options = ort.SessionOptions()
         sess_options.enable_cpu_mem_arena = False
-        self.enc_session = ort.InferenceSession(encoder_model_path)
-        # self.dec_session = ort.InferenceSession(decoder_model_path)
+        self.enc_session = ort.InferenceSession(encoder_model_path, sess_options=sess_options)
         self.dec_merged_session = ort.InferenceSession(decoder_merged_model_path, sess_options=sess_options)
         self.emb_session = ort.InferenceSession(embedding_model_path, sess_options=sess_options)
         self.vis_session = ort.InferenceSession(vision_model_path, sess_options=sess_options)
@@ -121,6 +113,7 @@ class Florence2OCR(BaseOCR):
         return inputs_embeds, attention_mask
 
 
+    @log_timing(logger, __name__, "Inference")
     def _inference(self, inputs_text: np.ndarray, inputs_pixel_values: np.ndarray) -> np.ndarray:
         """
         Perform inference using the ONNX model.
@@ -175,6 +168,7 @@ class Florence2OCR(BaseOCR):
             )
     
 
+    @log_timing(logger, __name__, "Preprocess")
     def _preprocess(self, image) -> np.ndarray:
         """
         Preprocess the input image for the model.
@@ -198,6 +192,7 @@ class Florence2OCR(BaseOCR):
         return inputs
     
 
+    @log_timing(logger, __name__, "Postprocess")
     def _postprocess(self, image, outputs: np.ndarray) -> str:
         """
         Postprocess the model outputs to get the final text.
@@ -230,31 +225,20 @@ class Florence2OCR(BaseOCR):
         """
         
         # Preprocess the image
-        t0 = time.time()
         inputs = self._preprocess(image)
-        t1 = time.time()
-        logger.info(f"Preprocess: {t1 - t0:.4f} seconds")
         
         # Perform inference
-        t2 = time.time()
         outputs = self._inference(inputs["input_ids"], inputs["pixel_values"])
-        t3 = time.time()
-        logger.info(f"Inference: {t3 - t2:.4f} seconds")
         
         # Postprocess the outputs to get the final text
-        t4 = time.time()
         parsed_results = self._postprocess(image, outputs)
-        t5 = time.time()
-        logger.info(f"Postprocess: {t5 - t4:.4f} seconds")
         
         return parsed_results
 
 
 if __name__ == "__main__":
     from PIL import Image
-    parent = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-    sys.path.append(parent)
-    from utils.misc import draw_boxes
+    from translate_overlay.utils.misc import draw_boxes
     
     # Example usage
     model_path = sys.argv[1]

@@ -1,84 +1,18 @@
-import os
 import sys
 
+import keyboard
 from PIL import ImageQt
 from PySide6.QtWidgets import QApplication, QWidget, QLabel
-from PySide6.QtGui import QPalette, QColor, QPainter, QFontMetrics, QFont
+from PySide6.QtGui import QPalette, QColor, QPainter
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
-import keyboard
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from interface.const import SHORTCUT_KEYS, ACTIONS
-from utils.logger import setup_logger
+from translate_overlay.interface.const import SHORTCUT_KEYS, ACTIONS
+from translate_overlay.utils.logger import setup_logger
+from translate_overlay.utils.misc import is_mostly_inside
+from translate_overlay.interface.translate_label import TranslateLabelGroup
 
 
 logger = setup_logger()
-
-
-class TranslateLabel(QLabel):
-    translate_done_signal = Signal(object)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.current_text = self.text()
-        self.replace_text = None
-        self.in_action = False
-        self.translate_done_signal.connect(self.set_translate_text)
-
-
-    def mousePressEvent(self, event):
-        if self.in_action:
-            return 
-        
-        if event.button() == Qt.LeftButton:
-            self.in_action = True
-            if self.replace_text:
-                self.set_translate_text(self.replace_text)
-            else:
-                self.parent().controller.translate_process(self.text(), self.translate_done_signal)
-                self.setText("Translating...")
-
-        elif event.button() == Qt.RightButton:
-            self.in_action = True
-            clipboard = QApplication.clipboard()
-            clipboard.setText(self.text())
-            self.setText("Copied!")
-            QTimer.singleShot(500, self._restore_text)
-
-        super().mousePressEvent(event)
-
-
-    def _restore_text(self):
-        self.setText(self.current_text)
-        self.in_action = False
-
-
-    @Slot(object)
-    def set_translate_text(self, replace_text):
-        if self.replace_text is None:
-            self.replace_text = self.current_text
-        else:
-            self.replace_text = self.text()
-
-        self.setText(replace_text)
-        # self.adjustSize()
-        self.stretch_label()
-        self.in_action = False
-    
-
-    def stretch_label(self):
-        stretch_list = [QFont.Condensed, QFont.SemiCondensed]
-        font = self.font()
-        metrics = QFontMetrics(font)
-        font_width = metrics.horizontalAdvance(self.text())
-        label_width = self.width()
-
-        while font_width > label_width and stretch_list:
-            font.setStretch(stretch_list.pop())
-            metrics = QFontMetrics(font)
-
-        self.setFont(font)
 
 
 class FullscreenBlackOverlay(QWidget):
@@ -86,6 +20,7 @@ class FullscreenBlackOverlay(QWidget):
     window_closed = Signal()
     ocr_done_signal = Signal(object)
     ocr_start_signal = Signal(object, object, object, )
+    split_label_group_signal = Signal(object)
 
     def __init__(self, controller=None, screen=None):
         super().__init__()
@@ -108,6 +43,7 @@ class FullscreenBlackOverlay(QWidget):
         self.snip_result = None
 
         self.text_label_list = []
+        self.text_label_group_list = []
         self.ocr_start_signal.connect(self.start_ocr)
         self.ocr_done_signal.connect(self.handle_ocr_result)
         self.in_ocr = False
@@ -116,16 +52,16 @@ class FullscreenBlackOverlay(QWidget):
 
         # Connect the signal to the slot
         self.trigger_fade.connect(self._toggle_fade)
+        self.split_label_group_signal.connect(self._handle_label_clicked)
 
 
     def show_text_box(
-        self, 
+        self,
         text: str, 
         text_region: tuple,
-        font_size: int=16
     ):
         x_min, y_min, x_max, y_max = text_region
-        text_label = TranslateLabel(text, self)
+        text_label = QLabel(text, self)
         text_label.setFixedHeight(y_max-y_min)
         text_label.setFixedWidth(x_max-x_min)
         text_label.setStyleSheet((
@@ -133,12 +69,11 @@ class FullscreenBlackOverlay(QWidget):
             "color: white; "
             "text-align: center; "
             "border-radius: 3px; "
-            "padding: 1px; "
-            f"font-size: {font_size}px; "
+            # "padding: 1px; "
+            f"font-size: 40px; "
         ))
-        text_label.adjustSize()
         text_label.move(x_min, y_min)
-        text_label.stretch_label()
+        # text_label.fit_text_to_label()
         text_label.show()
 
         return text_label
@@ -153,20 +88,15 @@ class FullscreenBlackOverlay(QWidget):
                 self.previous_screenshot = self.screenshot
 
             self.in_ocr = True
-            self.message_label = self.show_text_box(f"OCRing...", (900, 200, 1100, 250), 30)
+            self.message_label = self.show_text_box(f"OCRing...", (900, 200, 1100, 250))
 
             image = ImageQt.fromqpixmap(image)
             self.controller.start_ocr(image, self.ocr_done_signal, x_offset, y_offset)
 
 
     @Slot(object)
-    def handle_ocr_result(self, ocr_results):
-        for ocr_text, region_box in ocr_results:
-            self.text_label_list.append(self.show_text_box(
-                ocr_text, 
-                region_box, 
-                int(region_box[3] - region_box[1])
-            ))
+    def handle_ocr_result(self, ocr_result_groups):
+        self.create_text_label_group(ocr_result_groups)
 
         self.in_ocr = False
         self.set_ocr_hotkey()
@@ -174,6 +104,23 @@ class FullscreenBlackOverlay(QWidget):
         if self.message_label:
             self.message_label.deleteLater()
             self.message_label = None
+
+
+    @Slot(object)
+    def _handle_label_clicked(self, group):
+        text_box_list = group.get_text_box_list()
+        self.text_label_group_list.remove(group)
+        group.clean_up()
+        group.deleteLater()
+
+        self.create_text_label_group([[item] for item in text_box_list])
+
+
+    def create_text_label_group(self, ocr_result_groups):
+        for group in ocr_result_groups:
+            self.text_label_group_list.append(
+                TranslateLabelGroup(group, self)
+            )
 
 
     def closeEvent(self, event):
@@ -203,6 +150,10 @@ class FullscreenBlackOverlay(QWidget):
             label.deleteLater()
         self.text_label_list.clear()
 
+        for group in self.text_label_group_list:
+            group.clean_up()
+        self.text_label_group_list.clear()
+
 
     def _capture_screen(self):
         self.screenshot = self.screen.grabWindow(0)
@@ -215,6 +166,9 @@ class FullscreenBlackOverlay(QWidget):
     def _set_labels_hidden(self, state):
         for label in self.text_label_list:
             label.setHidden(state)
+
+        for group in self.text_label_group_list:
+            group.set_hidden(state)
 
 
     @Slot(object)
@@ -319,14 +273,41 @@ class FullscreenBlackOverlay(QWidget):
     def mouseReleaseEvent(self, event):
         if self.snip_mode and event.button() == Qt.LeftButton and self.snip_start:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            ctrl_held = event.modifiers() & Qt.KeyboardModifier.ControlModifier
             self.snip_end = event.pos()
             self.snip_rect = self._get_snip_rect()
             self.snip_result = self._get_snip_image()
             left, top, width, height = self.snip_rect
+            right = left + width
+            bottom = top + height
             self.disable_snip_mode()
+
             # Do something with self.snip_result (QPixmap)
             if width >= 10 and height >= 10:
-                self.ocr_start_signal.emit(self.snip_result, left, top)
+                if not ctrl_held:
+                    self.ocr_start_signal.emit(self.snip_result, left, top)
+                else:
+                    selected_text_box = list()
+                    for group in self.text_label_group_list[:]:
+                        box_xyxy = group.get_box_xyxy()
+                        if any([
+                            box_xyxy[0] >= left,
+                            box_xyxy[1] >= top,
+                            box_xyxy[2] <= right,
+                            box_xyxy[3] <= bottom,
+                        ]) and is_mostly_inside(
+                            box_xyxy,
+                            (left, top, right, bottom),
+                            0.5
+                        ):
+                            selected_text_box += group.get_text_box_list()
+                            self.text_label_group_list.remove(group)
+                            group.clean_up()
+                            group.deleteLater()
+
+                    if len(selected_text_box) > 0:
+                        self.create_text_label_group([selected_text_box])
+                    self.enable_snip_mode()
             else:
                 self.enable_snip_mode()
 

@@ -1,15 +1,13 @@
-import os
-import sys
-
 from PySide6.QtCore import QThread, Signal, QObject
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from ocr import TEXT_RECOGNIZERS
-from translate import TRANSLATERS
-from interface.worker import OCRWorker, TranslateWorker, TextRegionDetectWorker
-from utils.misc import pad_image_to_square, merge_text_images, map_florence2_to_trd_result
-from utils.logger import setup_logger
+from translate_overlay.ocr import TEXT_RECOGNIZERS
+from translate_overlay.translate import TRANSLATERS
+from translate_overlay.interface.worker import OCRWorker, TranslateWorker, TRDWorker
+from translate_overlay.utils.misc import (
+    pad_image_to_square, merge_text_images, 
+    map_florence2_to_trd_result, group_boxes_to_paragraphs
+)
+from translate_overlay.utils.logger import setup_logger
 
 
 logger = setup_logger()
@@ -19,7 +17,8 @@ class Controller(QObject):
     init_finished = Signal()
     trd_data_signal = Signal(object, object)
     ocr_data_signal = Signal(object, object)
-    translate_data_signal = Signal(object, object)
+    translate_data_signal = Signal(object, object, object)
+    error_signal = Signal(object)
 
     def __init__(self):
         super().__init__()
@@ -56,10 +55,11 @@ class Controller(QObject):
             target_lang,
             beam_size, 
     ):
-        self.trd_worker = TextRegionDetectWorker(trd_path, beam_size)
+        self.trd_worker = TRDWorker(trd_path, beam_size)
         self.trd_worker.moveToThread(self.thread)
         self.trd_worker.initialized.connect(self._on_trd_initialized)
         self.trd_worker.result.connect(self.handle_trd_result)
+        self.trd_worker.error.connect(self.handle_error_message)
         self.trd_data_signal.connect(self.trd_worker.run)
         self.thread.started.connect(self.trd_worker.init_worker)
 
@@ -68,6 +68,7 @@ class Controller(QObject):
         self.ocr_worker.moveToThread(self.thread)
         self.ocr_worker.initialized.connect(self._on_ocr_initialized)
         self.ocr_worker.result.connect(self.handle_text_reco_result)
+        self.ocr_worker.error.connect(self.handle_error_message)
         self.ocr_data_signal.connect(self.ocr_worker.run)
         self.thread.started.connect(self.ocr_worker.init_worker)
 
@@ -76,6 +77,7 @@ class Controller(QObject):
         self.translate_worker.moveToThread(self.thread)
         self.translate_worker.initialized.connect(self._on_translate_initialized)
         self.translate_worker.result.connect(self.handle_translate_result)
+        self.translate_worker.error.connect(self.handle_error_message)
         self.translate_data_signal.connect(self.translate_worker.run)
         self.thread.started.connect(self.translate_worker.init_worker)
 
@@ -123,6 +125,10 @@ class Controller(QObject):
         if self.thread.isRunning():
             self.thread.quit()
             self.thread.wait()
+
+
+    def handle_error_message(self, error_msg):
+        self.error_signal.emit(error_msg)
 
 
     def update_source_lang(self, source_lang):
@@ -222,18 +228,19 @@ class Controller(QObject):
             ]
             results.append((item["ocr_result"], trd_box_xyxy))
 
-        self.ocr_done_signal.emit(results)
+        grouped_result, _ = group_boxes_to_paragraphs(results)
+        self.ocr_done_signal.emit(grouped_result)
         self.processing_image = None
         self.image_x_offset = None
         self.image_y_offset = None
         self.ocr_results = list()
 
 
-    def translate_process(self, data, done_signal):
+    def translate_process(self, data, num_segments, done_signal):
         if self.translate_worker is not None:
             self.translate_id += 1
             self.translate_task_dict[self.translate_id] = done_signal
-            self.translate_data_signal.emit(data, self.translate_id)
+            self.translate_data_signal.emit(data, num_segments, self.translate_id)
         
 
     def handle_translate_result(self, result, data_id):

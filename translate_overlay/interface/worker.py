@@ -1,23 +1,22 @@
-import os
-import sys
+import traceback
+
 from PySide6.QtCore import QObject, Signal, Slot
 
-
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from text_region_detect.craft import CRAFT
+from translate_overlay.text_region_detect.craft import CRAFT
+from translate_overlay.utils.misc import ErrorMessage, split_text_tokens
 
 
 class Worker(QObject):
     initialized = Signal()
     finished = Signal()
     result = Signal(object, object)
+    error = Signal(object)
 
     def __init__(self):
         super().__init__()
 
 
-class TextRegionDetectWorker(Worker):
+class TRDWorker(Worker):
     def __init__(self, trd_model_path, beam_size):
         super().__init__()
         self.trd_model_path = trd_model_path
@@ -26,18 +25,25 @@ class TextRegionDetectWorker(Worker):
 
     @Slot()
     def init_worker(self):
-        self.trd = CRAFT(
-            model_path=self.trd_model_path, 
-        )
-        self.initialized.emit()
+        try:
+            self.trd = CRAFT(
+                model_path=self.trd_model_path, 
+            )
+            self.initialized.emit()
+        except Exception as e:
+            error_message = ErrorMessage(e, traceback.format_exc(), "TRD Worker")
+            self.error.emit(error_message)
 
 
     @Slot(object, object)
     def run(self, data, data_id):
         # Perform trd processing
-        result = self.trd.recognize(data)
-        self.result.emit(result, data_id)
-        self.finished.emit()
+        try:
+            result = self.trd.recognize(data)
+            self.result.emit(result, data_id)
+        except Exception as e:
+            error_message = ErrorMessage(e, traceback.format_exc(), "TRD Worker")
+            self.error.emit(error_message)
 
 
 class OCRWorker(Worker):
@@ -50,20 +56,27 @@ class OCRWorker(Worker):
 
     @Slot()
     def init_worker(self):
-        self.ocr = self.ocr_model(
-            model_path=self.ocr_model_path, 
-            beam_size=self.beam_size,
-            output_region=True
-        )
-        self.initialized.emit()
+        try:
+            self.ocr = self.ocr_model(
+                model_path=self.ocr_model_path, 
+                beam_size=self.beam_size,
+                output_region=True
+            )
+            self.initialized.emit()
+        except Exception as e:
+            error_message = ErrorMessage(e, traceback.format_exc(), "OCR Worker")
+            self.error.emit(error_message)
 
 
     @Slot(object, object)
     def run(self, data, data_id):
         # Perform OCR processing
-        result = self.ocr.recognize(data)
-        self.result.emit(result, data_id)
-        self.finished.emit()
+        try:
+            result = self.ocr.recognize(data)
+            self.result.emit(result, data_id)
+        except Exception as e:
+            error_message = ErrorMessage(e, traceback.format_exc(), "OCR Worker")
+            self.error.emit(error_message)
 
 
 class TranslateWorker(Worker):
@@ -78,21 +91,47 @@ class TranslateWorker(Worker):
 
     @Slot()
     def init_worker(self):
-        self.translator = self.translate_model(
-            model_path=self.translate_model_path, 
-            beam_size=self.beam_size,
-        )
-        self.initialized.emit()
+        try:
+            self.translator = self.translate_model(
+                model_path=self.translate_model_path, 
+                beam_size=self.beam_size,
+            )
+            self.initialized.emit()
+        except Exception as e:
+            error_message = ErrorMessage(e, traceback.format_exc(), "Translate Worker")
+            self.error.emit(error_message)
 
 
     @Slot(object, object)
-    def run(self, data, data_id):
+    def run(self, data, num_segments, data_id):
         # Perform translation processing
-        result = self.translator.translate(
-            data, 
-            self.target_lang, 
-            self.source_lang
-        )
-        self.result.emit(result, data_id)
-        self.finished.emit()
+        try:
+            result = self.translator.translate(
+                data, 
+                self.target_lang, 
+                self.source_lang
+            )
+            result = self.split_text(result, num_segments)
+            self.result.emit(result, data_id)
+        except Exception as e:
+            error_message = ErrorMessage(e, traceback.format_exc(), "Translate Worker")
+            self.error.emit(error_message)
+
+            
+    def split_text(self, text, num_segments):
+        # Break down long sentence into short segments with similar length
+        # Number of segments is the same as self.text_label_list
+        # Use sentencepiece tokenizer to tokenize long sentence into pieces
+        # Accumulate length of characters from each piece to get segment length
+        # If space is avaiable near the segment point, segment at space first, so words in languages like English are complete
+        # Only for languages like Chinese, Japanese, Thai where space is not need, cut after segment length is long enough
+        if num_segments <= 1 or not text:
+            return [text] + [""] * (num_segments - 1)
+
+        # Tokenize the text
+        pieces = self.translator.encode_tokens(text)
+
+        segments = [self.translator.decode_tokens(segment) for segment in split_text_tokens(pieces, num_segments)]
+
+        return segments
 

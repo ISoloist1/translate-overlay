@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import math
 
 import cv2
@@ -8,10 +7,8 @@ import numpy as np
 from PIL import Image
 import onnxruntime as ort
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from text_region_detect.base import BaseTextRegionDetection
-from utils.logger import setup_logger
+from translate_overlay.text_region_detect.base import BaseTextRegionDetection
+from translate_overlay.utils.logger import setup_logger, log_timing
 
 
 logger = setup_logger()
@@ -21,12 +18,10 @@ class CRAFT(BaseTextRegionDetection):
     def __init__(self, model_path: str):
         self.model_path = model_path
 
-        t0 = time.time()
         self._load_model()
-        t1 = time.time()
-        logger.info(f"Load model: {t1 - t0:.4f} seconds")
 
 
+    @log_timing(logger, __name__, "Load model")
     def _load_model(self):
         reco_model_path = os.path.join(self.model_path, "craftmlt25k.onnx")
         refine_model_path = os.path.join(self.model_path, "refine.onnx")
@@ -45,6 +40,7 @@ class CRAFT(BaseTextRegionDetection):
         self.refine_session = ort.InferenceSession(refine_model_path, sess_options=sess_options)
         
 
+    @log_timing(logger, __name__, "Preprocess")
     def _preprocess(self, input_image):
         def resize_aspect_retio(input_image, square_size, mag_ratio):
             width, height = input_image.size
@@ -100,6 +96,7 @@ class CRAFT(BaseTextRegionDetection):
         return processed_image_array, ratio
 
 
+    @log_timing(logger, __name__, "Inference")
     def _inference(self, input_array):
         reco_input_name = self.reco_session.get_inputs()[0].name
         y, feature = self.reco_session.run(None, {reco_input_name: input_array})
@@ -111,6 +108,7 @@ class CRAFT(BaseTextRegionDetection):
         return y, y_refiner
 
 
+    @log_timing(logger, __name__, "Postprocess")
     def _postprocess(self, infer_output, refine_output, input_image, ratio):
         def getDetBoxes_core(textmap, linkmap, text_threshold, link_threshold, low_text):
             # prepare data
@@ -192,11 +190,11 @@ class CRAFT(BaseTextRegionDetection):
         w, h = input_image.size
 
         for box in adjusted_boxes:
-            x_min = max(int(min(box, key=lambda x: x[0])[0]), 1)
-            x_max = min(int(max(box, key=lambda x: x[0])[0]), w-1)
-            y_min = max(int(min(box, key=lambda x: x[1])[1]), 3)
-            y_max = min(int(max(box, key=lambda x: x[1])[1]), h-2)    
-            boxes_xxyy.append([x_min-1, y_min-1, x_max, y_max])
+            x_min = max(math.floor(min(box, key=lambda x: x[0])[0]), 1)
+            x_max = min(math.ceil(max(box, key=lambda x: x[0])[0]), w-1)
+            y_min = max(math.floor(min(box, key=lambda x: x[1])[1]), 3)
+            y_max = min(math.ceil(max(box, key=lambda x: x[1])[1]), h-2)    
+            boxes_xxyy.append([x_min-1, y_min-1, x_max+1, y_max+1])
 
         return boxes_xxyy
 
@@ -204,22 +202,13 @@ class CRAFT(BaseTextRegionDetection):
     def recognize(self, input_image):
         
         # Preprocess the image
-        t0 = time.time()
         input_array, ratio = self._preprocess(input_image)
-        t1 = time.time()
-        logger.info(f"Preprocess: {t1 - t0:.4f} seconds")
         
         # Perform inference
-        t2 = time.time()
         infer_output, refine_output = self._inference(input_array)
-        t3 = time.time()
-        logger.info(f"Inference: {t3 - t2:.4f} seconds")
         
         # Postprocess the outputs to get the final text
-        t4 = time.time()
         boxes_xyxy = self._postprocess(infer_output, refine_output, input_image, ratio)
-        t5 = time.time()
-        logger.info(f"Postprocess: {t5 - t4:.4f} seconds")
         
         return boxes_xyxy
 
@@ -227,7 +216,7 @@ class CRAFT(BaseTextRegionDetection):
 
 
 if __name__ == "__main__":
-    from utils.misc import draw_boxes, merge_text_images
+    from utils.misc import draw_boxes, merge_text_images, group_boxes_to_paragraphs
     # Example usage
     model_path = sys.argv[1]
     image = Image.open(sys.argv[2])
@@ -237,9 +226,32 @@ if __name__ == "__main__":
 
 
     # Test crop
+    text_box_list = [("", i) for i in boxes_xyxy]
     merged_boxes_xyxy = []
+    merged_original_cluster_groups = []
 
-    # merged_boxes_xyxy = group_boxes_to_paragraphs_dbscan(boxes_xyxy, eps=30)
+    grouped_boxes_xyxy, original_cluster_groups = group_boxes_to_paragraphs(text_box_list)
+    for i in grouped_boxes_xyxy:
+        box_list = [j[1] for j in i]
+        box_list_transposed = list(zip(*box_list))
+
+        merged_boxes_xyxy.append((
+            min(box_list_transposed[0]), 
+            min(box_list_transposed[1]), 
+            max(box_list_transposed[2]), 
+            max(box_list_transposed[3]), 
+        ))
+
+    for i in original_cluster_groups:
+        box_list = [j[1] for j in i]
+        box_list_transposed = list(zip(*box_list))
+
+        merged_original_cluster_groups.append((
+            min(box_list_transposed[0]), 
+            min(box_list_transposed[1]), 
+            max(box_list_transposed[2]), 
+            max(box_list_transposed[3]), 
+        ))
     # End test crop
 
 
@@ -258,6 +270,7 @@ if __name__ == "__main__":
 
 
     image = draw_boxes(image, boxes_xyxy, "yellow")
+    image = draw_boxes(image, merged_original_cluster_groups, "green")
     image = draw_boxes(image, merged_boxes_xyxy, "red")
 
     logger.info(boxes_xyxy)
