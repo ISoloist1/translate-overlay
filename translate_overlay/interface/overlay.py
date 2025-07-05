@@ -1,23 +1,18 @@
-import os
 import sys
 
 import keyboard
 from PIL import ImageQt
-import sentencepiece as spm
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QWidget, QLabel
 from PySide6.QtGui import QPalette, QColor, QPainter
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from interface.const import SHORTCUT_KEYS, ACTIONS
-from utils.logger import setup_logger
-from utils.misc import is_mostly_inside
-from interface.translate_label import TranslateLabel, TranslateLabelGroup
+from translate_overlay.interface.const import SHORTCUT_KEYS, ACTIONS
+from translate_overlay.utils.logger import setup_logger
+from translate_overlay.utils.misc import is_mostly_inside
+from translate_overlay.interface.translate_label import TranslateLabelGroup
 
 
 logger = setup_logger()
-TOKENIZER_MODEL = os.path.join(parent, "utils", "spm", "spiece.model")
 
 
 class FullscreenBlackOverlay(QWidget):
@@ -55,9 +50,6 @@ class FullscreenBlackOverlay(QWidget):
 
         self.message_label = None
 
-        self.sp_model = spm.SentencePieceProcessor()
-        self.sp_model.Load(TOKENIZER_MODEL)
-
         # Connect the signal to the slot
         self.trigger_fade.connect(self._toggle_fade)
         self.split_label_group_signal.connect(self._handle_label_clicked)
@@ -69,19 +61,19 @@ class FullscreenBlackOverlay(QWidget):
         text_region: tuple,
     ):
         x_min, y_min, x_max, y_max = text_region
-        text_label = TranslateLabel(text, self)
+        text_label = QLabel(text, self)
         text_label.setFixedHeight(y_max-y_min)
         text_label.setFixedWidth(x_max-x_min)
         text_label.setStyleSheet((
             "background-color: rgba(0, 0, 0, 180); "
             "color: white; "
-            # "text-align: center; "
+            "text-align: center; "
             "border-radius: 3px; "
             # "padding: 1px; "
-            # f"font-size: {font_size}px; "
+            f"font-size: 40px; "
         ))
         text_label.move(x_min, y_min)
-        text_label.fit_text_to_label()
+        # text_label.fit_text_to_label()
         text_label.show()
 
         return text_label
@@ -127,7 +119,7 @@ class FullscreenBlackOverlay(QWidget):
     def create_text_label_group(self, ocr_result_groups):
         for group in ocr_result_groups:
             self.text_label_group_list.append(
-                TranslateLabelGroup(group, self, self.sp_model)
+                TranslateLabelGroup(group, self)
             )
 
 
