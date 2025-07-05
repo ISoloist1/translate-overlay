@@ -7,11 +7,9 @@ from typing import Any, List, Dict, Tuple
 from tokenizers import Tokenizer
 from transformers import AutoProcessor
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from ocr.base import BaseOCR
-from utils.onnx_decode import create_init_past_key_values, greedy_search, batched_beam_search_with_past
-from utils.logger import setup_logger
+from translate_overlay.ocr.base import BaseOCR
+from translate_overlay.utils.onnx_decode import create_init_past_key_values, greedy_search, batched_beam_search_with_past
+from translate_overlay.utils.logger import setup_logger
 
 
 logger = setup_logger()
@@ -63,7 +61,6 @@ class Florence2OCR(BaseOCR):
         """
 
         encoder_model_path = os.path.join(self.model_path, "encoder_model_uint8.onnx")
-        decoder_model_path = os.path.join(self.model_path, "decoder_model_uint8.onnx")
         decoder_merged_model_path = os.path.join(self.model_path, "decoder_model_merged_uint8.onnx")
         embedding_model_path = os.path.join(self.model_path, "embed_tokens_uint8.onnx")
         vision_model_path = os.path.join(self.model_path, "vision_encoder_uint8.onnx")
@@ -71,7 +68,6 @@ class Florence2OCR(BaseOCR):
 
         for model_path in [
             encoder_model_path,
-            decoder_model_path,
             decoder_merged_model_path,
             embedding_model_path,
             vision_model_path,
@@ -82,8 +78,7 @@ class Florence2OCR(BaseOCR):
             
         sess_options = ort.SessionOptions()
         sess_options.enable_cpu_mem_arena = False
-        self.enc_session = ort.InferenceSession(encoder_model_path)
-        # self.dec_session = ort.InferenceSession(decoder_model_path)
+        self.enc_session = ort.InferenceSession(encoder_model_path, sess_options=sess_options)
         self.dec_merged_session = ort.InferenceSession(decoder_merged_model_path, sess_options=sess_options)
         self.emb_session = ort.InferenceSession(embedding_model_path, sess_options=sess_options)
         self.vis_session = ort.InferenceSession(vision_model_path, sess_options=sess_options)
@@ -252,9 +247,7 @@ class Florence2OCR(BaseOCR):
 
 if __name__ == "__main__":
     from PIL import Image
-    parent = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-    sys.path.append(parent)
-    from utils.misc import draw_boxes
+    from translate_overlay.utils.misc import draw_boxes
     
     # Example usage
     model_path = sys.argv[1]
