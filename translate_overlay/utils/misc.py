@@ -1,15 +1,22 @@
-import os
 from math import ceil, log, log2
+from dataclasses import dataclass
 
 import numpy as np
 from PIL import ImageDraw, Image
-from sklearn.cluster import DBSCAN, AgglomerativeClustering
+from sklearn.cluster import AgglomerativeClustering
 from scipy.spatial.distance import pdist, squareform
 
 from .logger import setup_logger
 
 
 logger = setup_logger()
+
+
+@dataclass
+class ErrorMessage:
+    error: str
+    traceback: str
+    source: str
 
 
 def draw_boxes(input_image, boxes_xyxy, outline="red"):
@@ -111,6 +118,8 @@ def chunk_image(image, max_width=768, max_height=768, overlap_size=100):
 
 
 def group_boxes_to_paragraphs(text_box_list, eps=0.2, gap_ratio=0.5, x_align_thresh=10):
+    if 1 == len(text_box_list):
+        return [text_box_list], [text_box_list]
 
     def normalize(value, threshold=10):
         return round(value / threshold) * threshold
@@ -243,6 +252,47 @@ def map_florence2_to_trd_result(florence2_result_list, trd_box_list, merged_box_
     return result_list
 
 
+def split_text_tokens(text_tokens, num_segments):
+    piece_lens = [len(piece) for piece in text_tokens]
+    total_chars = sum(piece_lens)
+    target_len = max(1, total_chars // num_segments + 1)
+
+    segments = []
+    current = []
+    current_len = 0
+
+    for i, (piece, piece_len) in enumerate(zip(text_tokens, piece_lens)):
+        if current and current_len >= target_len and len(segments) <= num_segments:
+            if not piece.startswith('\u2581'):
+                if any([future_piece.startswith('\u2581') for future_piece in text_tokens[i+1:i+4]]):
+                    pass
+
+                elif any([past_piece.startswith('\u2581') for past_piece in current[-3:]]):
+                    for idx, past_piece in enumerate(current[::-1][:3]):
+                        if past_piece.startswith('\u2581'):
+                            segments.append(current[:len(current)-idx-1])
+                            current = current[len(current)-idx-1:]
+                            current_len = len(current)
+
+                else:
+                    segments.append(current)
+                    current = []
+                    current_len = 0
+            else:
+                segments.append(current)
+                current = []
+                current_len = 0
+
+        current.append(piece)
+        current_len += piece_len
+
+    if current:
+        segments.append(current)
+
+    segment_piece_count = sum([len(segment) for segment in segments])
+    assert segment_piece_count == len(text_tokens)
+
+    return segments
 
 
 if __name__ == "__main__":

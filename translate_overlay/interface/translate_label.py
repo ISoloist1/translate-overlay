@@ -1,13 +1,8 @@
-import os
-import sys
-
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 from PySide6.QtGui import QFontMetrics, QPainter, QColor
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QRect
 
-parent = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.append(parent)
-from utils.logger import setup_logger
+from translate_overlay.utils.logger import setup_logger
 
 
 logger = setup_logger()
@@ -34,11 +29,10 @@ class TranslateLabelGroup(QObject):
     translate_signal = Signal()
     translate_done_signal = Signal(object)
 
-    def __init__(self, ocr_result_group, parent, tokenizer):
+    def __init__(self, ocr_result_group, parent):
         super().__init__()
 
         self.parent = parent
-        self.tokenizer = tokenizer
         self.in_action = False
         self.translate_done_signal.connect(self.handle_translate_result)
 
@@ -134,75 +128,17 @@ class TranslateLabelGroup(QObject):
         else:
             self.set_message_text(["Translating..."])
             logger.info(f"Translate: {self.current_text}")
-            self.parent.controller.translate_process(self.current_text, self.translate_done_signal)
+            self.parent.controller.translate_process(self.current_text, len(self.text_label_list), self.translate_done_signal)
 
 
     @Slot(object)
     def handle_translate_result(self, translate_result):
-        translate_result_list = self.split_text(translate_result)
-        
-        logger.info(f"Translated text: {translate_result}")
-        logger.info(f"Splitted text: {translate_result_list}")
+        translate_result_list = translate_result
         
         for label, text in zip(self.text_label_list, translate_result_list):
             label.set_translate_text(text)
 
         self.in_action = False
-
-
-    def split_text(self, text):
-        # Break down long sentence into short segments with similar length
-        # Number of segments is the same as self.text_label_list
-        # Use sentencepiece tokenizer to tokenize long sentence into pieces
-        # Accumulate length of characters from each piece to get segment length
-        # If space is avaiable near the segment point, segment at space first, so words in languages like English are complete
-        # Only for languages like Chinese, Japanese, Thai where space is not need, cut after segment length is long enough
-        num_segments = len(self.text_label_list)
-        if num_segments <= 1 or not text:
-            return [text] + [""] * (num_segments - 1)
-
-        # Tokenize the text
-        pieces = self.tokenizer.EncodeAsPieces(text)
-        piece_lens = [len(piece) for piece in pieces]
-        total_chars = sum(piece_lens)
-        target_len = max(1, total_chars // num_segments + 1)
-
-        segments = []
-        current = []    
-        current_len = 0
-
-        for i, (piece, piece_len) in enumerate(zip(pieces, piece_lens)):
-            if current and current_len >= target_len and len(segments) <= num_segments:
-                if not piece.startswith('\u2581'):
-                    if any([future_piece.startswith('\u2581') for future_piece in pieces[i+1:i+4]]):
-                        pass
-                    elif any([past_piece.startswith('\u2581') for past_piece in current[-3:]]):
-                        for idx, past_piece in enumerate(current[::-1][:3]):
-                            if past_piece.startswith('\u2581'):
-                                segments.append(current[:len(current)-idx-1])
-                                current = current[len(current)-idx-1:]
-                                current_len = len(current)
-                    else:
-                        segments.append(current)
-                        current = []
-                        current_len = 0
-                else:
-                    segments.append(current)
-                    current = []
-                    current_len = 0
-
-            current.append(piece)
-            current_len += piece_len
-
-        if current:
-            segments.append(current)
-
-        segment_piece_count = sum([len(segment) for segment in segments])
-        assert segment_piece_count == len(pieces)
-
-        segments = [self.tokenizer.DecodePieces(segment) for segment in segments]
-
-        return segments
 
 
     def show_text_box(
@@ -301,6 +237,7 @@ class TranslateLabel(QLabel):
             self.replace_text = self.text()
 
         self.setText(replace_text)
+        self.current_text = replace_text
         self.fit_text_to_label()
         self.in_action = False
 
