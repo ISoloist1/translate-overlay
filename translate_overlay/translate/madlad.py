@@ -70,8 +70,8 @@ class MadladTranslator(BaseTranslator):
         :return: None
         """
 
-        encoder_model_path = os.path.join(self.model_path, "encoder_model.onnx")
-        decoder_merged_model_path = os.path.join(self.model_path, "decoder_model_merged.onnx")
+        encoder_model_path = os.path.join(self.model_path, "encoder_model_quantized.onnx")
+        decoder_merged_model_path = os.path.join(self.model_path, "decoder_model_merged_quantized.onnx")
         spm_model_path = os.path.join(self.model_path, "spiece.model")
 
         for model_path in [encoder_model_path, decoder_merged_model_path, spm_model_path]:
@@ -221,9 +221,21 @@ class MadladTranslator(BaseTranslator):
 if __name__ == "__main__":
     # Example usage
     text = "SciPy is a Python module that provides algorithms for mathematics, science, and engineering. It works with NumPy arrays and offers routines for statistics, optimization, integration, linear algebra, and more."
+    text = "Cooking the Perfect 10-Pound Turkey: A Comprehensive Guide"
+    text = "The Ultimate Guide to Cooking Meatloaf: Temperature and Time"
     # model_path = r"E:\work\1-personal\madlad400-3b-mt\onnx"
     model_path = sys.argv[1]
+    target_lang = sys.argv[2]
+
     translator = MadladTranslator(model_path=model_path, beam_size=3)
-    translated_text = translator.translate(text, "Chinese", "Any")
-    logger.info(translated_text)
+
+    if target_lang == "test":
+        for target_lang in TARGET_LANG_MAP.values():
+            print(target_lang)
+            translated_text = translator.translate(text, target_lang, "Any")
+            logger.info(translated_text)
+
+    else:
+        translated_text = translator.translate(text, target_lang, "Any")
+        logger.info(translated_text)
 

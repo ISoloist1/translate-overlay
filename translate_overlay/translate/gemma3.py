@@ -112,7 +112,7 @@ class Gemma3Translator(BaseTranslator):
         """
 
         # decoder_merged_model_path = os.path.join(self.model_path, "model_uint8.onnx")
-        decoder_merged_model_path = os.path.join(self.model_path, "model_fp16.onnx")
+        decoder_merged_model_path = os.path.join(self.model_path, "model_q4.onnx")
         tokenizer_path = os.path.join(self.model_path, "tokenizer.json")
 
         for model_path in [decoder_merged_model_path, tokenizer_path]:
