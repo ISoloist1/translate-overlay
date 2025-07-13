@@ -169,11 +169,11 @@ class MainWindow(QMainWindow):
             self.controller.init_finished.connect(self._on_init_finished)
             self.controller.error_signal.connect(self._handle_error_message)
             self.controller.init_worker(
-                self.trd_path_edit.text(),
+                self.trd_path_edit.text().strip(),
                 self.ocr_model_dropdown.currentText(),
-                self.ocr_path_edit.text(), 
+                self.ocr_path_edit.text().strip(), 
                 self.translate_model_dropdown.currentText(),
-                self.translate_path_edit.text(), 
+                self.translate_path_edit.text().strip(), 
                 self.source_lang_dropdown.currentText(),
                 self.target_lang_dropdown.currentText(),
                 self.beam_size_spin.value(),
@@ -273,9 +273,9 @@ if __name__ == "__main__":
     window = MainWindow(
         trd_path="E:\\work\\1-personal\\CRAFT-onnx\\models",
         ocr_path="E:\\work\\1-personal\\Florence-2-base\\onnx\\onnx",
-        # translate_path="E:\\work\\1-personal\\madlad400-3b-mt\\onnx\\quantization\\optimum\\with_accelerate_weight_dedup",
+        translate_path="E:\\work\\1-personal\\madlad400-3b-mt\\onnx\\quantization\\optimum\\with_accelerate_weight_dedup",
         # translate_path="E:\\work\\1-personal\\gemma-3-1b-it-ONNX\\onnx",
-        translate_path="E:\\work\\1-personal\\gemma-3n-E2B-it-ONNX\\onnx",
+        # translate_path="E:\\work\\1-personal\\gemma-3n-E2B-it-ONNX\\onnx",
     )
     window.show()
     sys.exit(app.exec())

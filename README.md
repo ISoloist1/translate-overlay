@@ -76,23 +76,13 @@ The tool is currently only designed to recognize horizontal machine-printed text
     ONNX model: https://huggingface.co/onnx-community/Florence-2-base
 
     Download following files:
-    - config.json
-    - preprocessor_config.json
-    - processing_florence2.py
-    - processor_config.json
     - tokenizer.json
     - embed_tokens_uint8.onnx
     - encoder_model_uint8.onnx
     - decoder_model_merged_uint8.onnx
     - vision_encoder_uint8.onnx
 
-    From ONNX community Hugging Face link: 
-
     <img width=500 src="translate_overlay/images/florence2_onnx_hf.png">
-
-    From Microsoft Hugging Face link:
-
-    <img width=500 src="translate_overlay/images/florence2_hf.png">
 
 
 #### Translation
@@ -160,8 +150,8 @@ The tool is currently only designed to recognize horizontal machine-printed text
 
 ### Todo
 
-- [ ] Create standalone executable.
-- [ ] Migrate processing code for Florence 2 from Hugging Face and remove Transformer dependency.
+- [x] Create standalone executable.
+- [x] Migrate processing code for Florence 2 from Hugging Face and remove Transformer dependency.
 - [ ] More options for text recognition for supporting more languages.
 - [ ] Better error handling.
-- [ ] Better text splitting.
+- [x] Better text splitting.

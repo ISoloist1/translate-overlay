@@ -2,7 +2,7 @@ import os
 import re
 import sys
 import json
-from typing import List
+from typing import List, Dict
 
 import numpy as np
 import onnxruntime as ort
@@ -167,7 +167,7 @@ class Gemma3nTranslator(BaseTranslator):
         )
     
 
-    def _embedding(self, input_ids: np.ndarray) -> np.ndarray:
+    def _embedding(self, input_ids: np.ndarray) -> Dict:
         inputs_embeds, per_layer_inputs = self.embed_session.run(None, {"input_ids": input_ids})
 
         return {"inputs_embeds": inputs_embeds, "per_layer_inputs": per_layer_inputs}

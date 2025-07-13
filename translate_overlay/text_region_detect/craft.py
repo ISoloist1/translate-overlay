@@ -1,3 +1,6 @@
+# Pre and post processing functions from code implementation from CRAFT by Clova AI Research, NAVER Corp.
+# https://github.com/clovaai/CRAFT-pytorch/blob/master/craft_utils.py
+
 import os
 import sys
 import math
