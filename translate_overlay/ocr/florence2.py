@@ -1,13 +1,17 @@
+# Regex pattern, coordinate quantizer, mean/std, etc. from Florence 2 code implementation by Microsoft:
+# https://huggingface.co/microsoft/Florence-2-base/blob/main/processing_florence2.py
+
 import os
+import re
 import sys
+from typing import Any, List, Dict, Tuple
+
 import numpy as np
 import onnxruntime as ort
-from typing import Any, List, Dict, Tuple
 from tokenizers import Tokenizer
-from transformers import AutoProcessor
 
 from translate_overlay.ocr.base import BaseOCR
-from translate_overlay.utils.onnx_decode import create_init_past_key_values, greedy_search, batched_beam_search_with_past
+from translate_overlay.utils.onnx_decode import create_init_past_key_values, batched_beam_search_with_past_new
 from translate_overlay.utils.logger import setup_logger, log_timing
 
 
@@ -29,6 +33,7 @@ class Florence2OCR(BaseOCR):
         self.tokenizer_max_length = 1024
         self.task = "<OCR_WITH_REGION>"
         self.prompt = "What is the text in the image, with regions?"
+        self.pattern = r'(.+?)<loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>'
         self.output_region = output_region
         
         self.bos_id = 0
@@ -81,8 +86,19 @@ class Florence2OCR(BaseOCR):
         self.vis_session = ort.InferenceSession(vision_model_path, sess_options=sess_options)
         self.tokenizer = Tokenizer.from_file(tokenizer_path)
         self.tokenizer.enable_truncation(max_length=self.tokenizer_max_length)
-
-        self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
+        self.tokenizer.add_tokens(
+            ['<od>', '</od>', '<ocr>', '</ocr>'] + \
+            [f'<loc_{x}>' for x in range(1000)] + \
+            [
+                '<cap>', '</cap>', '<ncap>', '</ncap>','<dcap>', '</dcap>', '<grounding>', '</grounding>', \
+                '<seg>', '</seg>', '<sep>', '<region_cap>', '</region_cap>', '<region_to_desciption>', \
+                '</region_to_desciption>', '<proposal>', '</proposal>', '<poly>', '</poly>', '<and>'
+            ]
+        )
+        self.coordinates_quantizer = CoordinatesQuantizer(
+            "floor",
+            (1000, 1000),
+        )
         
 
     def _merge_input_ids_with_image_features(
@@ -111,6 +127,53 @@ class Florence2OCR(BaseOCR):
         attention_mask = np.concatenate([image_attention_mask, task_prefix_attention_mask], axis=1)
 
         return inputs_embeds, attention_mask
+    
+
+    def parse_ocr_from_text_and_spans(
+            self, text, pattern, image_size, area_threshold=-1.0,
+        ):
+        bboxes = []
+        labels = []
+        text = text.replace('<s>', '')
+        # ocr with regions
+        parsed = re.findall(pattern, text)
+        instances = []
+        image_width, image_height = image_size
+
+        for ocr_line in parsed:
+            ocr_content = ocr_line[0]
+            quad_box = ocr_line[1:]
+            quad_box = [int(i) for i in quad_box]
+            quad_box = self.coordinates_quantizer.dequantize(
+                np.array(quad_box).reshape(-1, 2),
+                size=image_size
+            ).reshape(-1).tolist()
+
+            if area_threshold > 0:
+                x_coords = [i for i in quad_box[0::2]]
+                y_coords = [i for i in quad_box[1::2]]
+
+                # apply the Shoelace formula
+                area = 0.5 * abs(sum(x_coords[i] * y_coords[i + 1] - x_coords[i + 1] * y_coords[i] for i in range(4 - 1)))
+
+                if area < (image_width * image_height) * area_threshold:
+                    continue
+
+            bboxes.append(quad_box)
+            labels.append(ocr_content)
+            instances.append((ocr_content, quad_box))
+
+        return instances
+
+
+    def pixel_values_normalize(self, pixel_values, mean, std) -> np.ndarray:
+        """
+        Normalizes `image` using the mean and standard deviation specified by `mean` and `std`.
+
+        image = (image - mean) / std
+        """
+
+        return (pixel_values - mean) / std
 
 
     @log_timing(logger, __name__, "Inference")
@@ -139,33 +202,44 @@ class Florence2OCR(BaseOCR):
             "attention_mask": encoder_attention_mask,
         })
         encoder_hidden_states = encoder_outputs[0]
-        init_past_key_values = create_init_past_key_values(self.num_heads, self.head_dim).squeeze(0)  # (1, num_heads, 0, head_dim)
-        
-        if self.beam_size is None:
-            # Greedy search
-            return greedy_search(
-                self.dec_merged_session,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                self.max_length,
-                self.eos_id,
-                self.eos_id,
-            )
-        else:
-            # Beam search
-            return batched_beam_search_with_past(
-                self.dec_merged_session,
-                "inputs_embeds",
-                encoder_hidden_states,
-                encoder_attention_mask,
-                init_past_key_values,
-                self.max_length,
-                self.beam_size,
-                self.eos_id,
-                self.eos_id,
-                self.num_layers,
-                self.emb_session,
-            )
+        input_ids = np.array([[self.eos_id]], dtype=np.int64)
+        init_past_key_values = create_init_past_key_values(self.num_heads, self.head_dim)  # (1, num_heads, 0, head_dim)
+
+        decoder_cache_name_dict = {
+            f'present.{layer}.{kv}': f'past_key_values.{layer}.{kv}'
+            for layer in range(self.num_layers)
+            for kv in ('encoder.key', 'encoder.value', 'decoder.key', 'decoder.value')
+        }
+
+        past_key_values = {
+            cache_name: init_past_key_values
+            for cache_name in decoder_cache_name_dict.values()
+        }
+
+        decoder_inputs = {
+            "encoder_hidden_states": np.repeat(encoder_hidden_states, 1, axis=0),
+            "encoder_attention_mask": np.repeat(encoder_attention_mask, 1, axis=0),
+            "use_cache_branch": np.array([False]),
+            **past_key_values
+        }
+
+        return batched_beam_search_with_past_new(
+            self.dec_merged_session,
+            "inputs_embeds",
+            input_ids,
+            decoder_inputs,
+            decoder_cache_name_dict,
+            self.max_length,
+            self.beam_size,
+            self.eos_id,
+            self._embedding,
+        )
+    
+
+    def _embedding(self, input_ids: np.ndarray) -> Dict:
+        inputs_embeds = self.emb_session.run(None, {"input_ids": input_ids})[0]
+
+        return {"inputs_embeds": inputs_embeds}
     
 
     @log_timing(logger, __name__, "Preprocess")
@@ -178,12 +252,17 @@ class Florence2OCR(BaseOCR):
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Resize and normalize the image
-        inputs = self.processor(
-            self.prompt, 
-            image, 
-            return_tensors="np",
-        )
+        inputs = dict()
+
+        resized_image = image.resize((768, 768), resample=3, reducing_gap=None)
+        pixel_values = np.array(resized_image, dtype=np.float64) / 255
+        pixel_values = pixel_values.astype(np.float32)
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        pixel_values = self.pixel_values_normalize(pixel_values, mean, std)
+        pixel_values = pixel_values.transpose([2, 0, 1])
+        pixel_values = np.expand_dims(pixel_values, axis=0)
+        inputs["pixel_values"] = pixel_values
 
         prompt_ids = self.tokenizer.encode(self.prompt).ids
         prompt_ids = np.array([prompt_ids], dtype=np.int64)
@@ -198,20 +277,18 @@ class Florence2OCR(BaseOCR):
         Postprocess the model outputs to get the final text.
         """
         # Convert the output IDs to text using the processor
-        decoded_text = self.processor.batch_decode(outputs, skip_special_tokens=False)[0]
+        # decoded_text = self.processor.batch_decode(outputs, skip_special_tokens=False)[0]
+        output_tokens = [item for item in outputs[0].tolist() if item not in [self.eos_id]]
+        decoded_text = self.tokenizer.decode(output_tokens, skip_special_tokens=False)
         if decoded_text.startswith("</s>"):
             decoded_text = decoded_text.replace("</s>", "", 1)
-        
-        parsed_results = self.processor.post_process_generation(
-            decoded_text, 
-            task=self.task, 
-            image_size=(image.width, image.height)
-        )
 
-        if self.output_region:
-            parsed_results = list(zip(parsed_results[self.task]["labels"], parsed_results[self.task]["quad_boxes"]))
-        else:
-            parsed_results = parsed_results[self.task]["labels"]
+        parsed_results = self.parse_ocr_from_text_and_spans(
+            decoded_text,
+            self.pattern,
+            (image.width, image.height),
+            0.0
+        )
         
         return parsed_results
 
@@ -234,6 +311,67 @@ class Florence2OCR(BaseOCR):
         parsed_results = self._postprocess(image, outputs)
         
         return parsed_results
+
+
+class CoordinatesQuantizer(object):
+    """
+    Quantize coornidates (Nx2)
+    """
+
+    def __init__(self, mode, bins):
+        self.mode = mode
+        self.bins = bins
+
+    def quantize(self, coordinates: np.ndarray, size):
+        bins_w, bins_h = self.bins  # Quantization bins.
+        size_w, size_h = size       # Original image size.
+        size_per_bin_w = size_w / bins_w
+        size_per_bin_h = size_h / bins_h
+        assert coordinates.shape[-1] == 2, 'coordinates should be shape (N, 2)'
+        x = coordinates[..., 0:1]  # Shape: (N, 1)
+        y = coordinates[..., 1:2]  # Shape: (N, 1)
+
+        if self.mode == 'floor':
+            quantized_x = np.floor(x / size_per_bin_w).clip(0, bins_w - 1)
+            quantized_y = np.floor(y / size_per_bin_h).clip(0, bins_h - 1)
+
+        elif self.mode == 'round':
+            raise NotImplementedError()
+
+        else:
+            raise ValueError('Incorrect quantization type.')
+
+        quantized_coordinates = np.concatenate(
+            (quantized_x, quantized_y), axis=-1
+        ).astype(int)
+
+        return quantized_coordinates
+
+    def dequantize(self, coordinates: np.ndarray, size):
+        bins_w, bins_h = self.bins  # Quantization bins.
+        size_w, size_h = size       # Original image size.
+        size_per_bin_w = size_w / bins_w
+        size_per_bin_h = size_h / bins_h
+        assert coordinates.shape[-1] == 2, 'coordinates should be shape (N, 2)'
+        x = coordinates[..., 0:1]  # Shape: (N, 1)
+        y = coordinates[..., 1:2]  # Shape: (N, 1)
+
+        if self.mode == 'floor':
+            # Add 0.5 to use the center position of the bin as the coordinate.
+            dequantized_x = (x + 0.5) * size_per_bin_w
+            dequantized_y = (y + 0.5) * size_per_bin_h
+
+        elif self.mode == 'round':
+            raise NotImplementedError()
+
+        else:
+            raise ValueError('Incorrect quantization type.')
+
+        dequantized_coordinates = np.concatenate(
+            (dequantized_x, dequantized_y), axis=-1
+        )
+
+        return dequantized_coordinates
 
 
 if __name__ == "__main__":
