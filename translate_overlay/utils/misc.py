@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import ImageDraw, Image
 from sklearn.cluster import AgglomerativeClustering
-from scipy.spatial.distance import pdist, squareform
 
 from .logger import setup_logger
 
@@ -152,10 +151,6 @@ def group_boxes_to_paragraphs(text_box_list, eps=0.2, gap_ratio=0.5, x_align_thr
         ])
     box_features = np.array(box_features)
 
-    dist_matrix = squareform(pdist(box_features, metric='euclidean'))
-    for i in dist_matrix.tolist():
-        print([f"{j:.5}".ljust(7) for j in i])
-
     distance_threshold = min(0.3, 1 / log(max(1, len(boxes_xyxy))))
     logger.info(f"Distance threshold: {distance_threshold}")
     clustering = AgglomerativeClustering(
@@ -218,6 +213,10 @@ def is_mostly_inside(rect1, rect2, threshold=0.8):
     inter_area = max(0, inter_x_max - inter_x_min) * max(0, inter_y_max - inter_y_min)
     rect1_area = (x1_max - x1_min) * (y1_max - y1_min)
 
+    if rect1_area == 0:
+        logger.warning("Bad rectangle with 0 area")
+        return False
+
     return inter_area / rect1_area >= threshold
 
 
@@ -245,24 +244,34 @@ def map_florence2_to_trd_result(florence2_result_list, trd_box_list, merged_box_
             break
 
         if not result_used:
-            print(f"Florence2 result not used: \nText: {text}\nBox: {florence2_box_xyxy}")
+            logger.warning(f"Florence2 result not used: \nText: {text}\nBox: {florence2_box_xyxy}")
 
     result_list = [(' - '.join(text), box_xyxy) for box_xyxy, text in result_dict.items()]
 
     return result_list
 
 
-def split_text_tokens(text_tokens, num_segments):
+def split_text_tokens(text_tokens, box_list):
+    # Break down long sentence into short segments with similar length
+    # Number of segments is the same as self.text_label_list
+    # Use sentencepiece tokenizer to tokenize long sentence into pieces
+    # Accumulate length of characters from each piece to get segment length
+    # If space is avaiable near the segment point, segment at space first, so words in languages like English are complete
+    # Only for languages like Chinese, Japanese, Thai where space is not need, cut after segment length is long enough
+
     piece_lens = [len(piece) for piece in text_tokens]
     total_chars = sum(piece_lens)
-    target_len = max(1, total_chars // num_segments + 1)
+    box_width_list = np.array([box[2] - box[0] for box in box_list])
+    box_width_list_normalized = box_width_list / box_width_list.sum()
+    target_lens = np.ceil(box_width_list_normalized * total_chars).astype(int).tolist()
+    logger.info(f"Segment target lengths: {target_lens}")
 
     segments = []
     current = []
     current_len = 0
 
     for i, (piece, piece_len) in enumerate(zip(text_tokens, piece_lens)):
-        if current and current_len >= target_len and len(segments) <= num_segments:
+        if current and current_len >= target_lens[len(segments)] and len(segments) < len(box_list):
             if not piece.startswith('\u2581'):
                 if any([future_piece.startswith('\u2581') for future_piece in text_tokens[i+1:i+4]]):
                     pass
@@ -273,15 +282,18 @@ def split_text_tokens(text_tokens, num_segments):
                             segments.append(current[:len(current)-idx-1])
                             current = current[len(current)-idx-1:]
                             current_len = len(current)
+                            logger.info("Complete segment with past beginning piece")
 
                 else:
                     segments.append(current)
                     current = []
                     current_len = 0
+                    logger.info("Complete segment with current piece")
             else:
                 segments.append(current)
                 current = []
                 current_len = 0
+                logger.info("Complete segment with future beginning piece")
 
         current.append(piece)
         current_len += piece_len

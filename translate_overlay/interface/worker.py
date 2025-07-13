@@ -4,6 +4,10 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from translate_overlay.text_region_detect.craft import CRAFT
 from translate_overlay.utils.misc import ErrorMessage, split_text_tokens
+from translate_overlay.utils.logger import setup_logger
+
+
+logger = setup_logger()
 
 
 class Worker(QObject):
@@ -103,7 +107,7 @@ class TranslateWorker(Worker):
 
 
     @Slot(object, object)
-    def run(self, data, num_segments, data_id):
+    def run(self, data, box_list, data_id):
         # Perform translation processing
         try:
             result = self.translator.translate(
@@ -111,27 +115,25 @@ class TranslateWorker(Worker):
                 self.target_lang, 
                 self.source_lang
             )
-            result = self.split_text(result, num_segments)
+            result = self.split_text(result, box_list)
             self.result.emit(result, data_id)
         except Exception as e:
             error_message = ErrorMessage(e, traceback.format_exc(), "Translate Worker")
             self.error.emit(error_message)
 
             
-    def split_text(self, text, num_segments):
-        # Break down long sentence into short segments with similar length
-        # Number of segments is the same as self.text_label_list
-        # Use sentencepiece tokenizer to tokenize long sentence into pieces
-        # Accumulate length of characters from each piece to get segment length
-        # If space is avaiable near the segment point, segment at space first, so words in languages like English are complete
-        # Only for languages like Chinese, Japanese, Thai where space is not need, cut after segment length is long enough
+    def split_text(self, text, box_list):
+        num_segments = len(box_list)
         if num_segments <= 1 or not text:
             return [text] + [""] * (num_segments - 1)
 
         # Tokenize the text
         pieces = self.translator.encode_tokens(text)
 
-        segments = [self.translator.decode_tokens(segment) for segment in split_text_tokens(pieces, num_segments)]
+        segments = [self.translator.decode_tokens(segment) for segment in split_text_tokens(pieces, box_list)]
+
+        logger.info(f"Translation: {text}")
+        logger.info(f"Segments: {segments}")
 
         return segments
 

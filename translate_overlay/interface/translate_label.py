@@ -128,7 +128,11 @@ class TranslateLabelGroup(QObject):
         else:
             self.set_message_text(["Translating..."])
             logger.info(f"Translate: {self.current_text}")
-            self.parent.controller.translate_process(self.current_text, len(self.text_label_list), self.translate_done_signal)
+            self.parent.controller.translate_process(
+                self.current_text, 
+                [label.box_xyxy for label in self.text_label_list], 
+                self.translate_done_signal
+            )
 
 
     @Slot(object)
@@ -190,23 +194,12 @@ class TranslateLabel(QLabel):
         
         ctrl_held = event.modifiers() & Qt.KeyboardModifier.ControlModifier
         if event.button() == Qt.LeftButton:
-            # self.in_action = True
-            # if self.replace_text:
-            #     self.set_translate_text(self.replace_text)
-            # else:
-            #     self.parent().controller.translate_process(self.text(), self.translate_done_signal)
-            #     self.setText("Translating...")
             if not ctrl_held:
                 self.group.translate()
             else: 
                 self.group.split_group()
 
         elif event.button() == Qt.RightButton:
-            # self.in_action = True
-            # clipboard = QApplication.clipboard()
-            # clipboard.setText(self.text())
-            # self.setText("Copied!")
-            # QTimer.singleShot(500, self._restore_text)
             self.group.copy_text()
 
         super().mousePressEvent(event)
